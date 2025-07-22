@@ -24,6 +24,10 @@ class SkyFallConsole(cmd.Cmd):
         """Exit the CLI."""
         return True 
     
+    def do_exit(self, line):
+        """Exit the CLI."""
+        return True 
+    
     def default(self, line):
         """Fallback: Execute unknown commands as shell commands"""
         try:
