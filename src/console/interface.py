@@ -1,7 +1,8 @@
 import cmd
 import shlex
 import subprocess
-from .utils import *
+from utils import *
+from modules.hardware_handler import *
 
 class SkyFallConsole(cmd.Cmd):
     intro = "Welcome to Skyfall — The Drone Killer Console. Type ? or 'help' to see commands.\n"
@@ -10,14 +11,22 @@ class SkyFallConsole(cmd.Cmd):
     def __init__(self, completekey = "tab", stdin = None, stdout = None):
         super().__init__(completekey, stdin, stdout)
         self.shell_binaries = load_shell_binaries()
+        
+    def do_toogle(self, arg):
+        handler = WifiCardHandler()
+        datatable : DataTable = handler.get_wifi_cards()
+        interface : dict = datatable.show_table_and_select()
+        handler.toggle_mode_airmon(interface)
+        
 
     def do_scan(self, arg):
         args = shlex.split(arg)
         if "--wifi" in args:
             print("Scanning wifi frequencies....")
  
-    def complete_scan(self, text, state):
-        return super().complete(text, state)
+    def complete_scan(self, text, line, begidx, endidx):
+        options = ["wifi"]
+        return [opt for opt in options if opt.startswith(text)]
 
     
     def do_quit(self, line):
