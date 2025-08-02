@@ -7,5 +7,6 @@ __author__ = "Bharath Venkatesan"
 __license__ = "MIT"
 
 from .wifi_card_handler import WifiCardHandler
+from .drone_detector import APAnalyzer, ParrotDroneAnalyzer, GenericDroneAnalyzer
 
-__all__ = ["WifiCardHandler"]
+__all__ = ["WifiCardHandler", "APAnalyzer", "ParrotDroneAnalyzer", "GenericDroneAnalyzer"]

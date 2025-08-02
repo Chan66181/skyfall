@@ -20,3 +20,9 @@
 6. Try to check for the open ports or do the vulnerability scanning.
 7. Once we connected to the network try to install the backdor/malware or anything like how they do in the metasploit.
 
+
+
+# Docker setup
+
+1. docker run -it --net=host --privileged ubuntu bash
+=> Give the privileged access to the container so that it can access the host devices.

@@ -3,6 +3,9 @@ import re
 import time 
 from typing import Optional, List, Dict, Union 
 from utils import DataTable
+import os
+import signal
+import threading
 
 class WifiCardHandler:
     def __init__(self):
@@ -21,6 +24,11 @@ class WifiCardHandler:
         except FileNotFoundError:
             print(f"[!] Error: Command '{command_list[0]}' not found. Is it installed and in your PATH?")
             return None
+        
+    def run_command_in_background(self, command_list: List[str], description: str = "Executing command"):
+        thread = threading.Thread(target=self._run_command, args=(command_list, description))
+        thread.start()
+
 
     def get_wifi_cards(self) -> DataTable:
         output = self._run_command(['iw', 'dev'], "Getting WiFi interface details")
@@ -213,3 +221,52 @@ class WifiCardHandler:
             if bssid.lower() == mac.lower():
                 return iface
         return None
+        
+    def start_airodump_scan(self, interface: str, output_prefix: str = "airodump_output") -> Optional[subprocess.Popen]:
+        # Clean up old airodump-ng output files before starting a new scan
+        for ext in ['.csv', '.kismet.csv', '.log', '.cap']:
+            file_path = f"{output_prefix}{ext}"
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    print(f"[*] Removed old airodump-ng output file: {file_path}")
+                except OSError as e:
+                    print(f"[!] Error removing old file {file_path}: {e}")
+        
+        command = ['sudo', 'airodump-ng', interface, '-w', output_prefix, '--output-format', 'csv', '--ignore-negative-one']
+        
+        # The key fix is here: call _run_command with the correct parameters
+        # The previous code in your screenshot was missing these.
+        process = self.run_command_in_background(command, f"Starting airodump-ng on {interface}")
+        
+        if isinstance(process, subprocess.Popen):
+            self.airodump_process = process
+            print(f"[*] airodump-ng started on {interface}. Output is being written to {output_prefix}-*.csv and monitored.")
+            return process
+        else:
+            print("[!] Failed to start airodump-ng. Ensure it's installed and interface is in monitor mode.")
+            return None
+
+    def stop_airodump_scan(self) -> bool:
+        if self.airodump_process and self.airodump_process.poll() is None:
+            print("[*] Stopping airodump-ng process...")
+            try:
+                # Send SIGTERM to the process group to ensure airodump-ng and any children stop
+                os.killpg(os.getpgid(self.airodump_process.pid), signal.SIGTERM)
+                self.airodump_process.wait(timeout=5) # Wait for it to terminate
+                print("[*] airodump-ng stopped.")
+                self.airodump_process = None
+                return True
+            except (ProcessLookupError, subprocess.TimeoutExpired) as e:
+                print(f"[!] Failed to stop airodump-ng gracefully: {e}. Attempting to kill.")
+                self.airodump_process.kill() # Force kill if SIGTERM fails
+                self.airodump_process.wait()
+                self.airodump_process = None
+                return True
+            except Exception as e:
+                print(f"[!] An unexpected error occurred while stopping airodump-ng: {e}")
+                return False
+        else:
+            print("[*] No active airodump-ng scan to stop.")
+            self.airodump_process = None # Ensure state is consistent
+            return True # If no process, it's considered stopped.
