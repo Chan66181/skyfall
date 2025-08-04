@@ -2,7 +2,7 @@ import subprocess
 import re 
 import time 
 from typing import Optional, List, Dict, Union 
-from utils import DataTable
+from shared import DataTable
 import os
 import signal
 import threading
@@ -14,10 +14,13 @@ class WifiCardHandler:
     def _run_command(self, command_list: List[str], description: str = "Executing command") -> Optional[str]:
         print(f"[*] {description}: {' '.join(command_list)}")
         try:
-            result = subprocess.run(command_list, capture_output=True, text=True, check=True)
+            result = subprocess.run(command_list, capture_output=True, text=True, check=True, timeout=20)
             if result.stderr:
                 print(f"[i] STDERR ({' '.join(command_list)}):\n{result.stderr.strip()}")
             return result.stdout.strip()
+        except subprocess.TimeoutExpired as e:
+            print(f"[!] Command '{command_list[0]}' execution is stopped after 20 seconds\n")
+            return ''
         except subprocess.CalledProcessError as e:
             print(f"[!] Command failed: {' '.join(command_list)}\nSTDOUT: {e.stdout.strip()}\nSTDERR: {e.stderr.strip()}")
             return None
@@ -25,9 +28,11 @@ class WifiCardHandler:
             print(f"[!] Error: Command '{command_list[0]}' not found. Is it installed and in your PATH?")
             return None
         
-    def run_command_in_background(self, command_list: List[str], description: str = "Executing command"):
-        thread = threading.Thread(target=self._run_command, args=(command_list, description))
-        thread.start()
+        
+        
+    # def run_command_in_background(self, command_list: List[str], description: str = "Executing command"):
+    #     thread = threading.Thread(target=self._run_command, args=(command_list, description))
+    #     thread.start()
 
 
     def get_wifi_cards(self) -> DataTable:
@@ -225,7 +230,7 @@ class WifiCardHandler:
     def start_airodump_scan(self, interface: str, output_prefix: str = "airodump_output") -> Optional[subprocess.Popen]:
         # Clean up old airodump-ng output files before starting a new scan
         for ext in ['.csv', '.kismet.csv', '.log', '.cap']:
-            file_path = f"{output_prefix}{ext}"
+            file_path = f"{output_prefix}{ext}" # change the file name getting part.
             if os.path.exists(file_path):
                 try:
                     os.remove(file_path)
@@ -237,15 +242,15 @@ class WifiCardHandler:
         
         # The key fix is here: call _run_command with the correct parameters
         # The previous code in your screenshot was missing these.
-        process = self.run_command_in_background(command, f"Starting airodump-ng on {interface}")
+        process = self._run_command(command, f"Starting airodump-ng on {interface}")
         
-        if isinstance(process, subprocess.Popen):
-            self.airodump_process = process
-            print(f"[*] airodump-ng started on {interface}. Output is being written to {output_prefix}-*.csv and monitored.")
-            return process
-        else:
-            print("[!] Failed to start airodump-ng. Ensure it's installed and interface is in monitor mode.")
-            return None
+        # if isinstance(process, subprocess.Popen):
+        #     self.airodump_process = process
+        #     print(f"[*] airodump-ng started on {interface}. Output is being written to {output_prefix}-*.csv and monitored.")
+        #     return process
+        # else:
+        #     print("[!] Failed to start airodump-ng. Ensure it's installed and interface is in monitor mode.")
+        #     return None
 
     def stop_airodump_scan(self) -> bool:
         if self.airodump_process and self.airodump_process.poll() is None:

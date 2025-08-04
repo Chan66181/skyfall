@@ -1,7 +1,7 @@
 import cmd
 import shlex
 import subprocess
-from utils import *
+from shared import *
 from modules.hardware_handler import *
 from typing import Optional, Dict, Union, List, Any
 import sys
@@ -9,6 +9,7 @@ import threading
 import csv
 import os
 import time
+import argparse
 
 class SkyFallConsole(cmd.Cmd):
     intro = "Welcome to Skyfall — The Drone Killer Console. Type ? or 'help' to see commands.\n"
@@ -78,6 +79,13 @@ class SkyFallConsole(cmd.Cmd):
             self.airodump_process = None # Ensure state is reset if process crashed
             self.scanning_interface = None
             self.airodump_output_file = None
+            
+    
+    def _trigger_stop(self, duration: int):
+        time.sleep(duration)
+        self._stop_scan_internal()
+        print("[!] Scanning process stopped...")
+    
 
     def cmdloop(self, intro=None):
         """
@@ -166,6 +174,13 @@ class SkyFallConsole(cmd.Cmd):
         Stop with Ctrl+C.
         Usage: ap_scan
         """
+        parser = argparse.ArgumentParser(prog='ap_scan', add_help=False)
+        parser.add_argument('--duration', type=int, help="Scan duration in seconds", default=10)
+        try:
+            args = parser.parse_args(shlex.split(arg))
+        except SystemExit:
+            print("[!] Invalid arguments. Usage: ap_scan --duration <seconds>")
+            return
         if self.airodump_process and self.airodump_process.poll() is None:
             print("[!] AP scanning is already active. Use Ctrl+C to stop it first.")
             return
@@ -223,103 +238,141 @@ class SkyFallConsole(cmd.Cmd):
             self.scanning_interface = str(interface_name)
             self.airodump_output_file = f"airodump_output_{self.scanning_interface}"
             
+            # self.stop_thread = threading.Thread(target=self._trigger_stop, args=(args.duration,), daemon=True)
+            # self.stop_thread.start()
             # Start airodump-ng process (this writes to disk for reliable parsing)
             # The key here is that this call must be non-blocking.
             self.airodump_process = self.wifi_card_handler.start_airodump_scan(
                 self.scanning_interface, self.airodump_output_file
             )
+            self._anaylze_airodump_result()
 
-            if self.airodump_process:
-                self.stop_scan_event.clear() # Clear event for new scan
-                self.scan_thread = threading.Thread(target=self._monitor_airodump_output, daemon=True)
-                self.scan_thread.start()
-                print(f"[*] Started AP scan on {self.scanning_interface}. Monitoring output...")
-                print("Press Ctrl+C to stop the scan. Use 'show_drones' or 'show_aps' at any time.")
-                print("When a drone is detected, use 'select_drone' to target it.")
-            else:
-                print("[!] Failed to start AP scan.")
-        else:
-            print("[!] No suitable monitor mode interface found or selected. AP scan aborted.")
-
-    def _monitor_airodump_output(self):
-        """
-        Internal method to continuously monitor and parse airodump-ng CSV output file live.
-        Runs in a separate thread.
-        """
-        csv_file_path = f"{self.airodump_output_file}-01.csv"
-        last_read_byte = 0
+        #     if self.airodump_process:
+        #         self.stop_scan_event.clear() # Clear event for new scan
+        #         self.scan_thread = threading.Thread(target=self._monitor_airodump_output, daemon=True)
+        #         self.scan_thread.start()
+        #         print(f"[*] Started AP scan on {self.scanning_interface}. Monitoring output...")
+        #         print("Press Ctrl+C to stop the scan. Use 'show_drones' or 'show_aps' at any time.")
+        #         print("When a drone is detected, use 'select_drone' to target it.")
+        #     else:
+        #         print("[!] Failed to start AP scan.")
+        # else:
+        #     print("[!] No suitable monitor mode interface found or selected. AP scan aborted.")
         
-        print(f"\n[*] Monitoring airodump-ng CSV: {csv_file_path}")
-
-        # The loop condition is correct
-        while not self.stop_scan_event.is_set():
-            # Check if the airodump-ng process is still running
-            if self.airodump_process and self.airodump_process.poll() is not None:
-                print("[!] airodump-ng process has terminated unexpectedly.")
-                self.stop_scan_event.set()
-                break
-            
-            # Wait for file to exist
-            if not os.path.exists(csv_file_path):
-                time.sleep(1)
-                continue
-            
-            try:
-                # The file reading logic looks correct, reading from the last known position.
-                with open(csv_file_path, 'rb') as f_bytes:
-                    f_bytes.seek(last_read_byte)
-                    new_content_bytes = f_bytes.read()
-                    last_read_byte = f_bytes.tell()
-
-                    if not new_content_bytes:
-                        time.sleep(1)
+    def _anaylze_airodump_result(self):
+        try:
+            csv_file_path = f"{self.airodump_output_file}-01.csv"
+            with open(csv_file_path, 'rb') as f_bytes:
+                lines = f_bytes.read().decode('utf-8', errors='ignore').strip().splitlines()
+                for line in lines:
+                    if line.__contains__('BSSID'):
                         continue
-                    
-                    new_content = new_content_bytes.decode('utf-8', errors='ignore')
-                    lines = new_content.strip().splitlines()
-                    ap_section_started = False
-                    
-                    for line in lines:
-                        if line.startswith("BSSID,"):
-                            ap_section_started = True
-                            continue
-                        if line.startswith("Station MAC,"):
-                            ap_section_started = False
-                            break
+                    if lines.__contains__('Station MAC'):
+                        continue
+                    if line is None or line.strip() == "":
+                        continue
+                    try:
+                        import io
+                        reader = csv.reader(io.StringIO(line))
+                        row_data = next(reader)
                         
-                        if ap_section_started and line.strip():
-                            try:
-                                import io
-                                reader = csv.reader(io.StringIO(line))
-                                row_data = next(reader)
+                        if len(row_data) >= 13: # this is not needed actually
+                            ap_bssid = row_data[0].strip()
+                            if ap_bssid not in self.known_aps:
+                                ap_info = {
+                                    "BSSID": ap_bssid,
+                                    "ESSID": row_data[13].strip() if row_data[13].strip() != "" else "<Hidden>",
+                                    "Channel": row_data[3].strip(),
+                                    "Power": row_data[8].strip(),
+                                    "RawData": row_data
+                                }
+                                self.known_aps[ap_bssid] = ap_info
+                                self._analyze_ap_for_drone(ap_info)
+                    except csv.Error:
+                        pass
+        except Exception as e:
+            print(f"[!] Error in _anaylze_airodump_result: {e}")
+            pass
 
-                                if len(row_data) >= 17:
-                                    ap_bssid = row_data[0].strip()
-                                    # ... rest of parsing logic ...
-                                    if ap_bssid not in self.known_aps:
-                                        ap_info = {
-                                            "BSSID": ap_bssid,
-                                            "ESSID": row_data[13].strip() if row_data[13].strip() != "" else "<Hidden>",
-                                            "Channel": row_data[3].strip(),
-                                            "Power": row_data[8].strip(),
-                                            "RawData": row_data
-                                        }
-                                        self.known_aps[ap_bssid] = ap_info
-                                        self._analyze_ap_for_drone(ap_info)
-                            except csv.Error:
-                                pass
-                            except Exception as e:
-                                print(f"[!] Warning: Error parsing AP line: {line} - {e}")
-                                pass
-                
-            except FileNotFoundError:
-                pass
-            except Exception as e:
-                print(f"\n[!] Error reading airodump-ng CSV: {e}")
+    # def _monitor_airodump_output(self):
+    #     """
+    #     Internal method to continuously monitor and parse airodump-ng CSV output file live.
+    #     Runs in a separate thread.
+    #     """
+    #     csv_file_path = f"{self.airodump_output_file}-01.csv"
+    #     last_read_byte = 0
+        
+    #     print(f"\n[*] Monitoring airodump-ng CSV: {csv_file_path}")
+
+    #     # The loop condition is correct
+    #     while not self.stop_scan_event.is_set():
+    #         # Check if the airodump-ng process is still running
+    #         if self.airodump_process and self.airodump_process.poll() is not None:
+    #             print("[!] airodump-ng process has terminated unexpectedly.")
+    #             self.stop_scan_event.set()
+    #             break
             
-            time.sleep(1) # Wait before checking for new content again
+    #         # Wait for file to exist
+    #         if not os.path.exists(csv_file_path):
+    #             time.sleep(1)
+    #             continue
+            
+    #         try:
+    #             # The file reading logic looks correct, reading from the last known position.
+    #             with open(csv_file_path, 'rb') as f_bytes:
+    #                 f_bytes.seek(last_read_byte)
+    #                 new_content_bytes = f_bytes.read()
+    #                 last_read_byte = f_bytes.tell()
 
-        print("[*] AP scan monitoring thread stopped.")
+    #                 if not new_content_bytes:
+    #                     time.sleep(1)
+    #                     continue
+                    
+    #                 new_content = new_content_bytes.decode('utf-8', errors='ignore')
+    #                 lines = new_content.strip().splitlines()
+    #                 ap_section_started = False
+                    
+    #                 for line in lines:
+    #                     if line.startswith("BSSID,"):
+    #                         ap_section_started = True
+    #                         continue
+    #                     if line.startswith("Station MAC,"):
+    #                         ap_section_started = False
+    #                         break
+                        
+    #                     if ap_section_started and line.strip():
+    #                         try:
+    #                             import io
+    #                             reader = csv.reader(io.StringIO(line))
+    #                             row_data = next(reader)
+
+    #                             if len(row_data) >= 17:
+    #                                 ap_bssid = row_data[0].strip()
+    #                                 # ... rest of parsing logic ...
+    #                                 if ap_bssid not in self.known_aps:
+    #                                     ap_info = {
+    #                                         "BSSID": ap_bssid,
+    #                                         "ESSID": row_data[13].strip() if row_data[13].strip() != "" else "<Hidden>",
+    #                                         "Channel": row_data[3].strip(),
+    #                                         "Power": row_data[8].strip(),
+    #                                         "RawData": row_data
+    #                                     }
+    #                                     self.known_aps[ap_bssid] = ap_info
+    #                                     self._analyze_ap_for_drone(ap_info)
+    #                         except csv.Error:
+    #                             pass
+    #                         except Exception as e:
+    #                             print(f"[!] Warning: Error parsing AP line: {line} - {e}")
+    #                             pass
+                
+    #         except FileNotFoundError:
+    #             pass
+    #         except Exception as e:
+    #             print(f"\n[!] Error reading airodump-ng CSV: {e}")
+            
+    #         time.sleep(1) # Wait before checking for new content again
+
+    #     print("[*] AP scan monitoring thread stopped.")
 
     def _analyze_ap_for_drone(self, ap_data: Dict[str, Any]):
         """
