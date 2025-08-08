@@ -1,0 +1,12 @@
+post/ (Post-Exploitation)
+--------------------------
+Shell interaction (e.g., root command execution)
+Dumping memory from drone
+Extracting logs or configs
+Creating forensic artefacts
+
+Scripts like:
+-----------------
+drone_memory_dump.py
+drone_log_collector.py
+persist_payload.py

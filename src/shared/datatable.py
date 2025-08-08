@@ -1,11 +1,11 @@
-from typing import Optional, List, Dict, Union 
+from typing import Optional, List, Dict, Any, Union
 
 class DataTable:
     def __init__(self, headers: List[str]):
         self.headers = list(headers)
         self.rows = []
 
-    def add_row(self, row_data: List[Union[str, int, None]]):
+    def add_row(self, row_data: List[Any]):
         if len(row_data) > len(self.headers):
             raise ValueError(f"Too many values in row. Expected {len(self.headers)}, got {len(row_data)}.")
         
@@ -20,21 +20,23 @@ class DataTable:
         for row in self.rows:
             row.append(default)
 
-    def get_row(self, index: int) -> Dict[str, Union[str, int, None]]:
+    def get_row(self, index: int) -> Dict[str, Any]:
         if not isinstance(index, int):
             raise TypeError("Row index must be an integer.")
         if index < 0 or index >= len(self.rows):
             raise IndexError(f"Row index {index} is out of range (0–{len(self.rows) - 1}).")
-        
         return dict(zip(self.headers, self.rows[index]))
     
-    def get_all_rows_as_dicts(self) -> List[Dict[str, Union[str, int, None]]]:
+    def get_row_count(self) -> int:
+        return len(self.rows)
+    
+    def get_all_rows_as_dicts(self) -> List[Dict[str, Any]]:
         all_dicts = []
         for row_list in self.rows:
             all_dicts.append(dict(zip(self.headers, row_list)))
         return all_dicts
 
-    def update_row_by_sno(self, s_no: int, new_data: Dict[str, Union[str, int, None]]):
+    def update_row_by_sno(self, s_no: int, new_data: Dict[str, Any]):
         if "S.No" not in self.headers:
             print("[!] Warning: 'S.No' column not found in table headers. Cannot update by S.No.")
             return
@@ -55,14 +57,14 @@ class DataTable:
         if not found:
             print(f"[!] Warning: Row with S.No {s_no} not found for update.")
 
-    def show_table_and_select(self, title: Optional[str] = None) -> Optional[Dict[str, Union[str, int, None]]]:
+    def show_table_and_select(self, title: Optional[str] = None, selection_message = "\nSelect a row by S.No (or 'q' to quit): ") -> Optional[Dict[str, Any]]:
         self.print_table(title=title)
         if not self.rows:
             print("No rows to select from.")
             return None
 
         while True:
-            choice = input("\nSelect a row by S.No (or 'q' to quit): ").strip().lower()
+            choice = input(selection_message).strip().lower()
             if choice == 'q':
                 print("Selection cancelled.")
                 return None

@@ -1,0 +1,12 @@
+pre/ (Pre-Exploitation / Discovery Phase)
+-------------------------------------------
+Scanning for Wi-Fi APs (e.g., drone AP and controller)
+Identifying the drone model
+Capturing handshake (if WPA — not needed for Parrot, but in general)
+Checking if telnet or open ports are available
+
+Scripts like:
+-----------------
+scan_for_drones.py
+identify_drone_type.py
+check_open_ports.py

@@ -1,13 +1,32 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
+from dataclasses import dataclass
+
+
+@dataclass
+class DroneInfo:
+    is_drone: bool
+    drone_type: str
+    vendor: Optional[str] = None
+    detection_method: Optional[str] = None
+
 
 class APAnalyzer(ABC):
+        
     @abstractmethod
-    def analyze(self, ap_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def analyze(self, ap_data: Dict[str, Any]) -> DroneInfo | None:
         """
         Analyzes a single AP's data.
         Returns a dictionary with detection results (e.g., {'is_drone': True, 'drone_type': 'Parrot'})
         or None if no drone is detected by this analyzer.
+        """
+        pass
+    
+    @abstractmethod
+    def is_drone(self, bssid: str) -> DroneInfo | None:
+        """
+        Checks if the given BSSID belongs to a known drone.
+        Returns True if it is a drone, False otherwise.
         """
         pass
     
@@ -48,7 +67,7 @@ class ParrotDroneAnalyzer(APAnalyzer):
         self.mac_lookup = MacVendorLookup()
         self.parrot_ouis = ["90:03:B7", "A0:14:3D"] # Specific OUIs for Parrot
 
-    def analyze(self, ap_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def analyze(self, ap_data: Dict[str, Any]) -> DroneInfo | None:
         bssid = ap_data.get("BSSID")
         if not bssid:
             return None
@@ -56,27 +75,36 @@ class ParrotDroneAnalyzer(APAnalyzer):
         oui = bssid[:8].upper()
         if oui in self.parrot_ouis:
             vendor = self.mac_lookup.get_vendor_info(bssid)
-            return {
-                "is_drone": True,
-                "drone_type": "Parrot",
-                "vendor": vendor if vendor else "Unknown Parrot Model",
-                "detection_method": "MAC OUI Lookup"
-            }
+            return DroneInfo(is_drone=True, drone_type="Parrot", vendor=vendor if vendor else "Unknown Parrot Model", detection_method="MAC OUI Lookup")
         return None
     
-class GenericDroneAnalyzer(APAnalyzer):
-    def __init__(self):
-        self.mac_lookup = MacVendorLookup()
-    def analyze(self, ap_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        bssid = ap_data.get("BSSID")
-        if not bssid:
-            return None
-        vendor = self.mac_lookup.get_vendor_info(bssid)
-        if vendor and "drone" in vendor.lower():
-            return {
-                "is_drone": True,
-                "drone_type": "Generic Drone",
-                "vendor": vendor,
-                "detection_method": "Generic MAC OUI Lookup"
-            }
+    def is_drone(self, bssid: str) -> DroneInfo | None:
+        """
+        Checks if the given BSSID belongs to a Parrot drone.
+        """
+        oui = bssid[:8].upper()
+        if oui in self.parrot_ouis:
+            vendor = self.mac_lookup.get_vendor_info(bssid)
+            return DroneInfo(is_drone=True, drone_type="Parrot", vendor=vendor if vendor else "Unknown Parrot Model", detection_method="MAC OUI Lookup")
         return None
+
+    
+# Not needed for now, but can be implemented later    
+# class GenericDroneAnalyzer(APAnalyzer):
+#     def __init__(self):
+#         self.mac_lookup = MacVendorLookup()
+#     def analyze(self, ap_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+#         bssid = ap_data.get("BSSID")
+#         if not bssid:
+#             return None
+#         vendor = self.mac_lookup.get_vendor_info(bssid)
+#         if vendor and "drone" in vendor.lower():
+#             return {
+#                 "is_drone": True,
+#                 "drone_type": "Generic Drone",
+#                 "vendor": vendor,
+#                 "detection_method": "Generic MAC OUI Lookup"
+#             }
+#         return None
+    
+    
