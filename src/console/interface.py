@@ -259,14 +259,18 @@ class SkyFallConsole(cmd.Cmd):
         #     print("[!] No suitable monitor mode interface found or selected. AP scan aborted.")
         
         
-    def do_command_executor(self, arg):
-        executor = CommandExecutor()
-        result : CommandResult = executor.execute(command=["ls", "-l"], timeout=5, sudo=True)
-        print(f"Command executed with return code: {result.return_code}")
-        print(f"STDOUT: {result.stdout.strip()}")
+    # def do_command_executor(self, arg):
+    #     executor = CommandExecutor()
+    #     result : CommandResult = executor.execute(command=["ls", "-l"], timeout=5, sudo=True)
+    #     print(f"Command executed with return code: {result.return_code}")
+    #     print(f"STDOUT: {result.stdout.strip()}")
         
     
-
+    def do_list_exploits(self,arg):
+        """To list all the available exploits based on the drone type and model."""
+        
+        print("Available Exploits:" )
+        
         
         
     def do_analyze_airodump_result(self, arg): # This is a private method, not a command,  after testing change it back.    
