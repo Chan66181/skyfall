@@ -281,8 +281,7 @@ from typing import Tuple, Optional
 from typing import Literal
 from shared import CommandExecutor
 import re
-
-InterfaceMode = Literal["managed", "monitor"]
+from shared import InterfaceMode
 
 
 class WifiCardHandler:
@@ -290,8 +289,7 @@ class WifiCardHandler:
     def __init__(self):
         self.exec = CommandExecutor()
 
-    def get_interface_mode(self, interface: str) -> Optional[str]:
-        """Return current mode for interface using `iw dev`."""
+    def get_interface_mode(self, interface: str) -> Optional[InterfaceMode]:
         try:
             res = self.exec.execute(["iw", "dev"], timeout=10)
             text = res.stdout
@@ -301,7 +299,7 @@ class WifiCardHandler:
             for line in after.splitlines():
                 s = line.strip()
                 if s.startswith("type "):
-                    return s.split()[1]
+                    return InterfaceMode.MONITOR if s.split()[1].strip().lower() == "monitor" else InterfaceMode.MANAGED
             return None
         except Exception:
             return None
@@ -320,16 +318,14 @@ class WifiCardHandler:
         use_sudo: bool = True,
         channel: Optional[int] = None,
     ) -> Tuple[bool, str, str, str, Optional[str]]:
-        """Ensure interface is in required mode. Returns (ok, stdout, stderr, message, updated_interface)."""
         current = self.get_interface_mode(interface)
         if current == required_mode:
             return True, "", "", f"Interface already in {required_mode} mode", interface
-        if required_mode == "monitor":
+        if required_mode == InterfaceMode.MONITOR:
             return self._to_monitor(interface, use_sudo, channel)
-        else:
-            return self._to_managed(interface, use_sudo)
+        return self._to_managed(interface, use_sudo)
 
-    def _to_monitor(self, interface: str, use_sudo: bool, channel: Optional[int]) -> Tuple[bool, str, str, str, Optional[str]]:
+    def _to_monitor(self, interface: str, use_sudo: bool, channel: Optional[int]):
         out_acc, err_acc = [], []
         r = self.exec.execute(["airmon-ng", "check", "kill"], timeout=15, sudo=use_sudo)
         out_acc.append(r.stdout); err_acc.append(r.stderr)
@@ -346,16 +342,12 @@ class WifiCardHandler:
         ok = (mode == "monitor")
         return ok, "\n".join(out_acc), "\n".join(err_acc), ("Switched to monitor" if ok else "Failed to switch to monitor"), (new_iface if ok else None)
 
-    def _to_managed(self, interface: str, use_sudo: bool) -> Tuple[bool, str, str, str, Optional[str]]:
+    def _to_managed(self, interface: str, use_sudo: bool):
         out_acc, err_acc = [], []
-        try:
-            self.exec.execute(["airmon-ng", "stop", interface], timeout=20, sudo=use_sudo)
-        except Exception:
-            pass
-        try:
-            self.exec.execute(["airmon-ng", "stop", interface + "mon"], timeout=20, sudo=use_sudo)
-        except Exception:
-            pass
+        try: self.exec.execute(["airmon-ng", "stop", interface], timeout=20, sudo=use_sudo)
+        except Exception: pass
+        try: self.exec.execute(["airmon-ng", "stop", interface + "mon"], timeout=20, sudo=use_sudo)
+        except Exception: pass
         r = self.exec.execute(["ip", "link", "set", interface, "down"], timeout=10, sudo=use_sudo)
         out_acc.append(r.stdout); err_acc.append(r.stderr)
         r = self.exec.execute(["iw", interface, "set", "type", "managed"], timeout=10, sudo=use_sudo)
@@ -372,7 +364,6 @@ class WifiCardHandler:
         return ok, "\n".join(out_acc), "\n".join(err_acc), ("Switched to managed" if ok else "Failed to switch to managed"), (interface if ok else None)
 
     def parse_ipv4_from_ip(self, iface: str) -> Optional[str]:
-        """Return IPv4 from `ip -4 addr show dev <iface>` output."""
         res = self.exec.execute(["ip", "-4", "addr", "show", "dev", iface], timeout=5)
         m = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", res.stdout)
         return m.group(1) if m else None
