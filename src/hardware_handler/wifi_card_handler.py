@@ -35,80 +35,7 @@
 #     #     thread.start()
 
 
-#     def get_wifi_cards(self) -> DataTable:
-#         output = self._run_command(['iw', 'dev'], "Getting WiFi interface details")
-        
-#         self.table = DataTable(headers=["S.No", "Interface", "Mode", "BSSID", "Updated_Interface"])
-#         if not output:
-#             return self.table
 
-#         interfaces_raw_data = []
-#         current_iface_info = {}
-
-#         # Split output by blocks related to interface or phy
-#         blocks = re.split(r'(?m)^(\s*phy#\S+|\s*Interface\s+\S+)', output)
-        
-#         # Iterate through block pairs (header + content)
-#         for i in range(1, len(blocks), 2): # Increment by 2 to get header and content
-#             block_header = blocks[i].strip()
-#             if i + 1 >= len(blocks): # Ensure there's content for this header
-#                 continue
-#             block_content = blocks[i+1]
-            
-#             if block_header.startswith("Interface"):
-#                 current_iface_info = {"Interface": block_header.split()[1]}
-#             elif block_header.startswith("phy#"):
-#                 # If a phy block starts, reset current_iface_info as it's a new device scope
-#                 current_iface_info = {}
-#                 # Extract interface name if it's directly under phy# (e.g., "phy#0\n\tInterface wlan0")
-#                 if "Interface" in block_content:
-#                     iface_line = next((line for line in block_content.splitlines() if line.strip().startswith("Interface")), None)
-#                     if iface_line:
-#                         current_iface_info["Interface"] = iface_line.strip().split()[1]
-#                 else:
-#                     continue # Skip if no interface immediately under phy# for this block
-#             else:
-#                 continue
-
-#             for line in block_content.splitlines():
-#                 line = line.strip()
-                
-#                 # If an Interface line appears within a block, it defines the current interface
-#                 if line.startswith("Interface"):
-#                     if "Interface" in current_iface_info and "BSSID" in current_iface_info and "Mode" in current_iface_info:
-#                         interfaces_raw_data.append(current_iface_info.copy()) # Use .copy() to avoid modifying appended dict
-#                     current_iface_info = {"Interface": line.split()[1]}
-#                 elif line.startswith("addr"):
-#                     match = re.search(r'addr\s+([0-9a-fA-F:]{17})', line)
-#                     if match:
-#                         current_iface_info["BSSID"] = match.group(1)
-#                 elif line.startswith("type"):
-#                     match = re.search(r'type\s+(\S+)', line)
-#                     if match:
-#                         current_iface_info["Mode"] = match.group(1)
-
-#             # After processing all lines in a block, add the interface if complete
-#             if "Interface" in current_iface_info and "BSSID" in current_iface_info and "Mode" in current_iface_info:
-#                 interfaces_raw_data.append(current_iface_info.copy()) # Use .copy()
-
-#         # Filter for unique interfaces, preferring more complete info if duplicates
-#         unique_interfaces = {}
-#         for info in interfaces_raw_data:
-#             iface_name = info['Interface']
-#             # Only add if it's new or if the current info is more complete
-#             if iface_name not in unique_interfaces or \
-#                (len(info) > len(unique_interfaces[iface_name]) and 'BSSID' in info and 'Mode' in info):
-#                 unique_interfaces[iface_name] = info
-        
-#         for idx, iface_info in enumerate(unique_interfaces.values(), 1):
-#             self.table.add_row([
-#                 idx, 
-#                 iface_info.get("Interface", "N/A"), 
-#                 iface_info.get("Mode", "N/A"), 
-#                 iface_info.get("BSSID", "N/A"),
-#                 iface_info.get("Interface", "N/A") # Initialize Updated_Interface with current name
-#             ])
-#         return self.table
 
 #     def toggle_mode_airmon(self, iface_row: Dict[str, Union[str, int, None]]):
 #         old_iface_name = iface_row.get("Interface")
@@ -279,7 +206,7 @@
 
 from typing import Tuple, Optional
 from typing import Literal
-from shared import CommandExecutor
+from shared import CommandExecutor, DataTable
 import re
 from shared import InterfaceMode
 
@@ -288,6 +215,67 @@ class WifiCardHandler:
     """Query and switch Wi‑Fi interface modes using CommandExecutor."""
     def __init__(self):
         self.exec = CommandExecutor()
+        
+    def get_wifi_cards(self) -> DataTable:
+        """Return a DataTable of Wi‑Fi interfaces with Interface/Mode/BSSID and an Updated_Interface column."""
+        from shared import DataTable  # if not already imported module-wide
+
+        table = DataTable(headers=["S.No", "Interface", "Mode", "BSSID", "Updated_Interface"])
+        try:
+            res = self.exec.execute(["iw", "dev"], timeout=10)
+            output = res.stdout or ""
+        except Exception:
+            return table
+
+        if not output.strip():
+            return table
+
+        interfaces_raw = []
+        lines = output.splitlines()
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if line.startswith("Interface "):
+                iface = line.split()[1]
+                mode = None
+                bssid = None
+                j = i + 1
+                while j < len(lines):
+                    s = lines[j].strip()
+                    if s.startswith("Interface ") or s.startswith("phy#"):
+                        break
+                    if s.startswith("type "):
+                        parts = s.split()
+                        if len(parts) >= 2:
+                            mode = parts[1]
+                    elif s.startswith("addr "):
+                        m = re.search(r"addr\s+([0-9a-fA-F:]{17})", s)
+                        if m:
+                            bssid = m.group(1)
+                    j += 1
+                if iface and mode and bssid:
+                    interfaces_raw.append({"Interface": iface, "Mode": mode, "BSSID": bssid})
+                i = j
+                continue
+            i += 1
+
+        unique: dict[str, dict] = {}
+        for info in interfaces_raw:
+            name = info["Interface"]
+            if name not in unique or len(info) > len(unique[name]):
+                unique[name] = info
+
+        for idx, info in enumerate(unique.values(), 1):
+            table.add_row([
+                idx,
+                info.get("Interface", "N/A"),
+                info.get("Mode", "N/A"),
+                info.get("BSSID", "N/A"),
+                info.get("Interface", "N/A"),
+            ])
+
+        return table
+
 
     def get_interface_mode(self, interface: str) -> Optional[InterfaceMode]:
         try:

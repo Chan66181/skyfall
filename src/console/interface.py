@@ -2,14 +2,16 @@ import cmd
 import shlex
 import subprocess
 from shared import *
-from modules.hardware_handler import *
+from hardware_handler import *
 from typing import Optional, Dict, Union, List, Any
 import sys
 import threading
-import csv
-import os
 import time
 import argparse
+from modules.exploit import get_attack_factory, BaseAttackScript
+from shared.dataclass.info import InterfaceInfo
+
+
 
 class SkyFallConsole(cmd.Cmd):
     intro = "Welcome to Skyfall — The Drone Killer Console. Type ? or 'help' to see commands.\n"
@@ -33,6 +35,7 @@ class SkyFallConsole(cmd.Cmd):
         self.detected_drones: Dict[str, Dict[str, Any]] = {} # Stores unique drones found
         self._last_monitor_interface: Optional[Dict[str, Union[str, int, None]]] = None
         self.current_target_drone: Optional[Dict[str, Any]] = None # The drone selected for 'context'
+        self.drone_target_info: Optional[DroneTargetInfo] = None
 
     def _get_last_toggled_monitor_interface(self) -> Optional[Dict[str, Union[str, int, None]]]:
         """
@@ -109,50 +112,56 @@ class SkyFallConsole(cmd.Cmd):
 
     def do_toggle(self, arg):
         """
-        Interactively select a Wi-Fi interface and toggle its mode (managed/monitor).
-        Usage: toggle
+        Select a Wi‑Fi interface and switch it to MONITOR mode.
+        - Shows interfaces
+        - Lets you pick one
+        - Toggles to monitor mode via ensure_mode
+        - Updates DroneTargetInfo.interface (InterfaceInfo) including rename + mode
         """
+        self.drone_target_info = DroneTargetInfo()  # Reset or create a new DroneTargetInfo
         if self.airodump_process and self.airodump_process.poll() is None:
-            print("[!] Cannot toggle mode while AP scanning is active. Please use Ctrl+C to stop it first.")
+            print("[!] Cannot toggle mode while AP scanning is active. Please stop it first.")
             return
-
-        print("\n--- Scanning for Wi-Fi Cards ---")
+        print("\n--- Scanning for Wi‑Fi Cards ---")
         datatable: DataTable = self.wifi_card_handler.get_wifi_cards()
-        
         if not datatable.rows:
-            print("[!] No Wi-Fi interfaces found. Please ensure your card is connected and drivers are loaded.")
+            print("[!] No Wi‑Fi interfaces found. Please ensure your card is connected and drivers are loaded.")
             return
-
-        selected_interface: Optional[Dict[str, Union[str, int, None]]] = datatable.show_table_and_select(
-            title="Available Wi-Fi Interfaces"
-        )
-
-        if selected_interface:
-            current_interface_name = selected_interface.get("Updated_Interface") or selected_interface.get("Interface")
-            selected_interface["Interface"] = current_interface_name 
-
-            print(f"\n--- Attempting to toggle mode for '{current_interface_name}' (S.No: {selected_interface.get('S.No')}) ---")
-            self.wifi_card_handler.toggle_mode_airmon(selected_interface)
-            
-            print("\n--- Final Wi-Fi Card State After Toggle ---")
-            final_datatable = self.wifi_card_handler.get_wifi_cards()
-            final_datatable.print_table(title="Updated Wi-Fi Interfaces")
-
-            final_selected_iface = None
-            for row in final_datatable.get_all_rows_as_dicts():
-                if row.get("S.No") == selected_interface.get("S.No"):
-                    final_selected_iface = row
-                    break
-            
-            if final_selected_iface and final_selected_iface.get("Mode") == "monitor":
-                self._last_monitor_interface = final_selected_iface
-                print(f"[*] Interface '{final_selected_iface.get('Updated_Interface')}' saved as last monitor mode interface.")
-            elif self._last_monitor_interface and self._last_monitor_interface.get("S.No") == selected_interface.get("S.No") and final_selected_iface and final_selected_iface.get("Mode") != "monitor":
-                self._last_monitor_interface = None
-                print("[*] Last monitor mode interface reset as it's no longer in monitor mode.")
-                
-        else:
+        selected_row = datatable.show_table_and_select(title="Available Wi‑Fi Interfaces")
+        if not selected_row:
             print("[*] No interface selected or selection cancelled.")
+            return
+        # Build InterfaceInfo from the chosen row and attach it to DroneTargetInfo
+        ii = InterfaceInfo.from_row(selected_row)
+        self.drone_target_info.interface = ii
+        print(f"\n--- Switching '{ii.iface_name}' to MONITOR mode ---")
+        ok, out, err, msg, updated_iface = self.wifi_card_handler.ensure_mode(
+            interface=ii.iface_name,
+            required_mode=InterfaceMode.MONITOR,
+            use_sudo=True
+        )
+        print(f"[i] {msg}")
+        if not ok:
+            if out.strip(): print("[stdout]\n" + out.strip())
+            if err.strip(): print("[stderr]\n" + err.strip())
+            return
+        # Persist rename + mode in InterfaceInfo and DroneTargetInfo
+        if updated_iface and updated_iface != ii.iface_name:
+            ii.is_name_changed = True
+            ii.monitor_name = updated_iface
+            ii.iface_name = updated_iface
+        ii.mode = InterfaceMode.MONITOR
+        print(f"[*] Interface now in MONITOR mode: {ii.iface_name}")
+        print("\n--- Final Wi‑Fi Card State ---")
+        final_table = self.wifi_card_handler.get_wifi_cards()
+        final_table.print_table(title="Updated Wi‑Fi Interfaces")
+        # Optional: remember UX helper
+        for row in final_table.get_all_rows_as_dicts():
+            row_iface = row.get("Updated_Interface") or row.get("Interface")
+            if row_iface == ii.iface_name and str(row.get("Mode","")).lower() == "monitor":
+                self._last_monitor_interface = row
+                break
+
 
     def do_list_wifi(self, arg):
         """
@@ -590,6 +599,30 @@ class SkyFallConsole(cmd.Cmd):
         # Suggest S.No values for detected drones
         s_nos = [str(d.get("S.No")) for d in self.detected_drones.values() if str(d.get("S.No")).startswith(text)]
         return s_nos
+    
+    
+    def do_list_attacks(self, arg):
+        """
+        Lists all available attacks based on the selected drone.
+        Usage: list_attacks
+        """
+        # if not self.current_target_drone:
+        #     print("[!] No drone selected. Use 'select_drone' first.")
+        #     return
+        self.attack_factory = get_attack_factory()
+        supported_attacks : List[AttackType] = self.attack_factory.get_supported_attacks(Manufacturer.PARROT, ParrotModel.AR2.value)
+        print("\n--- Available Attacks for Selected Drone ---")
+        for attack in supported_attacks:
+            print(f"- {attack.name} ({attack.value})")
+            
+        attack_type = input("Enter the attack type number").strip().upper()
+        
+        attack  = self.attack_factory.create(Manufacturer.PARROT, ParrotModel.AR2.value, AttackType.ARP_SPOOF, DroneTargetInfo("", "", "", "", "", 1))
+        if not attack:
+            print("[!] Invalid attack type selected.")
+            return
+        result = attack.attack()
+
 
 
     def do_scan(self, arg):
