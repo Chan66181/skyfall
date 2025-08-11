@@ -161,8 +161,7 @@ class SkyFallConsole(cmd.Cmd):
             if row_iface == ii.iface_name and str(row.get("Mode","")).lower() == "monitor":
                 self._last_monitor_interface = row
                 break
-
-
+            
     def do_list_wifi(self, arg):
         """
         List all detected Wi-Fi interfaces and their current modes.
@@ -173,7 +172,8 @@ class SkyFallConsole(cmd.Cmd):
         if not datatable.rows:
             print("[!] No Wi-Fi interfaces found.")
         datatable.print_table(title="Available Wi-Fi Interfaces")
-
+    
+    
     def do_ap_scan(self, arg):
         """
         Starts scanning for Access Points (APs) using airodump-ng.
@@ -266,21 +266,6 @@ class SkyFallConsole(cmd.Cmd):
         #         print("[!] Failed to start AP scan.")
         # else:
         #     print("[!] No suitable monitor mode interface found or selected. AP scan aborted.")
-        
-        
-    # def do_command_executor(self, arg):
-    #     executor = CommandExecutor()
-    #     result : CommandResult = executor.execute(command=["ls", "-l"], timeout=5, sudo=True)
-    #     print(f"Command executed with return code: {result.return_code}")
-    #     print(f"STDOUT: {result.stdout.strip()}")
-        
-    
-    def do_list_exploits(self,arg):
-        """To list all the available exploits based on the drone type and model."""
-        
-        print("Available Exploits:" )
-        
-        
         
     def do_analyze_airodump_result(self, arg): # This is a private method, not a command,  after testing change it back.    
         """
