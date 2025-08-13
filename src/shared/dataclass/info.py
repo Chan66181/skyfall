@@ -37,6 +37,41 @@ class InterfaceInfo:
             mode=InterfaceMode.MONITOR if str(row.get("Mode","")).lower() == "monitor" else InterfaceMode.MANAGED,
             bssid=row.get("BSSID"),
         )
+        
+    def to_dict(self) -> dict:
+        return {
+            "iface_name": self.iface_name,
+            "original_name": self.original_name,
+            "monitor_name": self.monitor_name,
+            "is_name_changed": self.is_name_changed,
+            "mode": self.mode.value if hasattr(self.mode, "value") else str(self.mode),
+            "bssid": self.bssid,
+            "channel": self.channel,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "InterfaceInfo":
+        mode_raw = d.get("mode", InterfaceMode.MANAGED)
+        mode = mode_raw
+        # accept value/name/str
+        try:
+            if isinstance(mode_raw, str):
+                # try by name first, then by raw value
+                try:
+                    mode = InterfaceMode[mode_raw]
+                except KeyError:
+                    mode = InterfaceMode(mode_raw)
+        except Exception:
+            mode = InterfaceMode.MANAGED
+        return cls(
+            iface_name=d.get("iface_name",""),
+            original_name=d.get("original_name"),
+            monitor_name=d.get("monitor_name"),
+            is_name_changed=bool(d.get("is_name_changed", False)),
+            mode=mode,
+            bssid=d.get("bssid"),
+            channel=d.get("channel"),
+        )
 
         
 @dataclass
@@ -51,6 +86,50 @@ class DroneTargetInfo:
     use_sudo: bool = True
     ip_through_drone_ap: Optional[str] = None
     data: Dict[str, Any] = field(default_factory=dict) 
+    
+    def to_dict(self) -> dict:
+        return {
+            "drone_mac": self.drone_mac,
+            "controller_mac": self.controller_mac,
+            "manufacturer": self.manufacturer.value,
+            "model": self.model.value,
+            "interface": self.interface.to_dict() if self.interface else None,
+            "channel": self.channel,
+            "ssid": self.ssid,
+            "use_sudo": self.use_sudo,
+            "ip_through_drone_ap": self.ip_through_drone_ap,
+            "data": self.data or {},
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "DroneTargetInfo":
+        # interface_mode could be a value or name
+        im_raw = d.get("interface_mode", InterfaceMode.MANAGED)
+        im = im_raw
+        try:
+            if isinstance(im_raw, str):
+                try:
+                    im = InterfaceMode[im_raw]
+                except KeyError:
+                    im = InterfaceMode(im_raw)
+        except Exception:
+            im = InterfaceMode.MANAGED
+
+        iface = d.get("interface")
+        iface_obj = InterfaceInfo.from_dict(iface) if isinstance(iface, dict) else None
+
+        return cls(
+            drone_mac=d.get("drone_mac"),
+            controller_mac=d.get("controller_mac"),
+            manufacturer=Manufacturer(d.get("manufacturer")),
+            model=Model(d.get("model")),
+            interface=iface_obj,
+            channel=d.get("channel"),
+            ssid=d.get("ssid"),
+            use_sudo=bool(d.get("use_sudo", True)),
+            ip_through_drone_ap=d.get("ip_through_drone_ap"),
+            data=d.get("data") or {},
+        )
 
 @dataclass
 class AirodumpResult:

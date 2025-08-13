@@ -57,36 +57,30 @@ class SkyFallConsole(cmd.Cmd):
                 return row_dict # Found the last toggled interface and it's in monitor mode
         return None
 
-    def _stop_scan_internal(self):
-        """Internal method to stop the active AP scan and clean up resources."""
-        if self.airodump_process and self.airodump_process.poll() is None:
-            self.stop_scan_event.set() # Signal the monitoring thread to stop
-            if self.scan_thread and self.scan_thread.is_alive():
-                print("[*] Waiting for scan monitoring thread to finish...")
-                self.scan_thread.join(timeout=5) # Give the thread time to exit
-                if self.scan_thread.is_alive():
-                    print("[!] Scan monitoring thread did not stop gracefully. Proceeding to stop airodump-ng.")
+    # def _stop_scan_internal(self):
+    #     """Internal method to stop the active AP scan and clean up resources."""
+    #     if self.airodump_process and self.airodump_process.poll() is None:
+    #         self.stop_scan_event.set() # Signal the monitoring thread to stop
+    #         if self.scan_thread and self.scan_thread.is_alive():
+    #             print("[*] Waiting for scan monitoring thread to finish...")
+    #             self.scan_thread.join(timeout=5) # Give the thread time to exit
+    #             if self.scan_thread.is_alive():
+    #                 print("[!] Scan monitoring thread did not stop gracefully. Proceeding to stop airodump-ng.")
             
-            if self.wifi_card_handler.stop_airodump_scan():
-                self.scanning_interface = None
-                self.airodump_output_file = None
-                self.airodump_process = None
-                # Don't clear known_aps or detected_drones immediately here,
-                # so 'show_drones' and 'show_aps' can still display results after stopping.
-                print("[*] AP scan successfully stopped.")
-            else:
-                print("[!] Failed to stop airodump-ng process.")
-        else:
-            print("[*] No active AP scan to stop.")
-            self.airodump_process = None # Ensure state is reset if process crashed
-            self.scanning_interface = None
-            self.airodump_output_file = None
-            
-    
-    def _trigger_stop(self, duration: int):
-        time.sleep(duration)
-        self._stop_scan_internal()
-        print("[!] Scanning process stopped...")
+    #         if self.wifi_card_handler.stop_airodump_scan():
+    #             self.scanning_interface = None
+    #             self.airodump_output_file = None
+    #             self.airodump_process = None
+    #             # Don't clear known_aps or detected_drones immediately here,
+    #             # so 'show_drones' and 'show_aps' can still display results after stopping.
+    #             print("[*] AP scan successfully stopped.")
+    #         else:
+    #             print("[!] Failed to stop airodump-ng process.")
+    #     else:
+    #         print("[*] No active AP scan to stop.")
+    #         self.airodump_process = None # Ensure state is reset if process crashed
+    #         self.scanning_interface = None
+    #         self.airodump_output_file = None
     
 
     def cmdloop(self, intro=None):
@@ -102,7 +96,7 @@ class SkyFallConsole(cmd.Cmd):
                 break # Exit the loop if cmdloop exits normally (e.g., via do_quit)
             except KeyboardInterrupt:
                 print("\n[!] Ctrl+C detected. Attempting to stop active scan...")
-                self._stop_scan_internal() # Stop the scan gracefully
+                # self._stop_scan_internal() # Stop the scan gracefully
                 # Reprint the prompt to make it clear the CLI is ready for new input
                 sys.stdout.write(self.prompt)
                 sys.stdout.flush()
@@ -348,6 +342,49 @@ class SkyFallConsole(cmd.Cmd):
         if result and result.stderr is None:
             print(f"\n[✓] Attack '{attack_type.name}' executed successfully.")
         print(f"=> Execution result: {result.stdout.strip()}")
+        
+        
+        
+    def do_save_context(self, arg):
+        """
+        Save current DroneTargetInfo to disk (JSON).
+        Usage: save_ctx [optional_path]
+        """
+        if not self.drone_target_info:
+            print("[!] No DroneTargetInfo to save. Run 'ap_scan' first.")
+            return
+        path = arg.strip() or None
+        p = save_context(self.drone_target_info, "context.json" if not path else path)
+        print(f"[✓] Context saved to {p}")
+        
+        
+    def do_load_context(self, arg):
+        """
+        Load DroneTargetInfo from disk (JSON).
+        Usage: load_ctx [optional_path]
+        """
+        path = arg.strip() or None
+        info = load_context(path)
+        if not info:
+            print("[!] No saved context found.")
+            return
+        self.drone_target_info = info
+        
+        print(f"[✓] Context loaded. Target: {info.ssid or '<hidden>'} ({info.drone_mac}) ch={info.channel}")
+        if info.interface:
+            print(f"    NIC: {info.interface.iface_name} [{info.interface.mode.value}]")
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
 
     def do_shell(self, arg): 
         """
@@ -377,13 +414,13 @@ class SkyFallConsole(cmd.Cmd):
 
     def do_quit(self, line):
         """Exit the CLI."""
-        self._stop_scan_internal() # Ensure any active scan is stopped before quitting
+        # self._stop_scan_internal() # Ensure any active scan is stopped before quitting
         print("Exiting Skyfall. Goodbye!")
         return True 
     
     def do_exit(self, line):
         """Exit the CLI."""
-        self._stop_scan_internal() # Ensure any active scan is stopped before exiting
+        # self._stop_scan_internal() # Ensure any active scan is stopped before exiting
         print("Exiting Skyfall. Goodbye!")
         return True 
     
