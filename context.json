@@ -1,0 +1,20 @@
+{
+  "drone_mac": "A0:14:3D:ED:92:14",
+  "controller_mac": "C2:28:AF:4A:AA:95",
+  "manufacturer": "Parrot",
+  "model": "AR 2.0",
+  "interface": {
+    "iface_name": "wlx3460f9f53faf",
+    "original_name": "wlx3460f9f53faf",
+    "monitor_name": null,
+    "is_name_changed": false,
+    "mode": "monitor",
+    "bssid": null,
+    "channel": null
+  },
+  "channel": 1,
+  "ssid": "ardrone2_003419",
+  "use_sudo": true,
+  "ip_through_drone_ap": null,
+  "data": {}
+}

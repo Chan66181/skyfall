@@ -364,7 +364,7 @@ class SkyFallConsole(cmd.Cmd):
         Usage: load_ctx [optional_path]
         """
         path = arg.strip() or None
-        info = load_context(path)
+        info = load_context("context.json" if not path else path)
         if not info:
             print("[!] No saved context found.")
             return
