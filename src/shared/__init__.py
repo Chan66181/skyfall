@@ -8,11 +8,12 @@ __license__ = "MIT"
 
 from .datatable import DataTable
 from .utils import *
-from .command_executor import CommandExecutor, CommandResult
+from .command_executor import CommandExecutor, CommandResult, SudoHelper
 from .cancellation_token import CancellationToken, OperationCanceledError
-from .enums.attack_enums import Manufacturer, ParrotModel, DjiModel, AttackType
+from .enums.attack_enums import Manufacturer, Model, AttackType
 from .enums.interface_mode import InterfaceMode
-from .dataclass.info import DroneTargetInfo, AttackResult
+from .dataclass.info import DroneTargetInfo, AttackResult, InterfaceInfo, AirodumpResult, DroneInfo 
+from .dataclass.info import AccessPoint, Station, DroneAPResult, results_to_datatable, stations_to_datatable, build_target_info_from_selection
 
 __all__ = [
             "DataTable",
@@ -22,10 +23,19 @@ __all__ = [
             "CancellationToken",
             "CommandResult",
             "Manufacturer",
-            "ParrotModel",
-            "DjiModel",
+            "Model",
             "AttackType",
             "InterfaceMode",
             "DroneTargetInfo",
-            "AttackResult"
+            "AttackResult",
+            "InterfaceInfo",
+            "AirodumpResult",
+            "SudoHelper",
+            "DroneInfo",
+            "AccessPoint",
+            "Station",
+            "DroneAPResult",
+            "results_to_datatable",
+            "stations_to_datatable",
+            "build_target_info_from_selection"
         ]

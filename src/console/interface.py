@@ -8,9 +8,9 @@ import sys
 import threading
 import time
 import argparse
-from modules.exploit import get_attack_factory, BaseAttackScript
+from modules.exploit import get_attack_factory
 from shared.dataclass.info import InterfaceInfo
-
+from external_dependencies.aircrack_ng_handler import AircrackNgHandler, DroneCSVAnalyser
 
 
 class SkyFallConsole(cmd.Cmd):
@@ -184,11 +184,12 @@ class SkyFallConsole(cmd.Cmd):
         """
         parser = argparse.ArgumentParser(prog='ap_scan', add_help=False)
         parser.add_argument('--duration', type=int, help="Scan duration in seconds", default=10)
+        duration = 10  # Default duration if not specified
         try:
             args = parser.parse_args(shlex.split(arg))
+            duration = args.duration
         except SystemExit:
-            print("[!] Invalid arguments. Usage: ap_scan --duration <seconds>")
-            return
+            print("[!] Defaulting to 10 seconds for scan duration.")
         if self.airodump_process and self.airodump_process.poll() is None:
             print("[!] AP scanning is already active. Use Ctrl+C to stop it first.")
             return
@@ -198,394 +199,128 @@ class SkyFallConsole(cmd.Cmd):
         self.detected_drones.clear()
         self.current_target_drone = None
 
-        interface_to_scan: Optional[Dict[str, Union[str, int, None]]] = None
+        if self.drone_target_info  and self.drone_target_info.interface is None:
+            self.do_toggle(arg="")  # Ensure we have a DroneTargetInfo with an interface set
+        elif self.drone_target_info and self.drone_target_info.interface and  self.drone_target_info.interface.mode != InterfaceMode.MONITOR:
+            print(f"[!] The selected interface {self.drone_target_info.interface.iface_name} is not in Monitor mode. Attempting to toggle it now.")
+            self.do_toggle(arg="")
         
-        last_mon_iface = self._get_last_toggled_monitor_interface()
-        if last_mon_iface:
-            current_name = last_mon_iface.get("Updated_Interface") or last_mon_iface.get("Interface")
-            print(f"[*] Found previously toggled monitor interface: '{current_name}'. Attempting to use it.")
-            interface_to_scan = last_mon_iface
-        else:
-            print("\n--- No previously selected monitor interface found or it's no longer active. ---")
-            print("--- Scanning for Wi-Fi Cards to find a suitable interface. ---")
-            datatable: DataTable = self.wifi_card_handler.get_wifi_cards()
-            
-            monitor_interfaces = [row for row in datatable.get_all_rows_as_dicts() if row.get("Mode") == "monitor"]
-            
-            if monitor_interfaces:
-                print("\n--- Select an existing Monitor Mode Interface for AP Scan ---")
-                monitor_dt = DataTable(headers=datatable.headers)
-                for row in monitor_interfaces:
-                    monitor_dt.add_row([row[h] for h in datatable.headers])
-                
-                interface_to_scan = monitor_dt.show_table_and_select(
-                    title="Available Monitor Mode Interfaces"
-                )
-            
-            if not interface_to_scan:
-                print("\n[!] No monitor mode interface selected.")
-                print("[*] Would you like to set an interface to monitor mode now?")
-                user_choice = input("Enter 'y' or 'n': ").strip().lower()
-
-                if user_choice == 'y':
-                    self.do_toggle(arg="")
-                    interface_to_scan = self._get_last_toggled_monitor_interface()
-                    if not interface_to_scan:
-                        print("[!] Interface toggling failed or no monitor interface was set. Cannot proceed with AP scan.")
-                        return
-                else:
-                    print("[*] AP scan cancelled.")
-                    return
-
-        if interface_to_scan:
-            interface_name = interface_to_scan.get("Updated_Interface") or interface_to_scan.get("Interface")
-            if not interface_name:
-                print("[!] Could not determine interface name for scanning.")
-                return
-
-            self.scanning_interface = str(interface_name)
-            self.airodump_output_file = f"airodump_output_{self.scanning_interface}"
-            
-            # self.stop_thread = threading.Thread(target=self._trigger_stop, args=(args.duration,), daemon=True)
-            # self.stop_thread.start()
-            # Start airodump-ng process (this writes to disk for reliable parsing)
-            # The key here is that this call must be non-blocking.
-            self.airodump_process = self.wifi_card_handler.start_airodump_scan(
-                self.scanning_interface, self.airodump_output_file
-            )
-            # self.do_analyze_airodump_result()
-
-        #     if self.airodump_process:
-        #         self.stop_scan_event.clear() # Clear event for new scan
-        #         self.scan_thread = threading.Thread(target=self._monitor_airodump_output, daemon=True)
-        #         self.scan_thread.start()
-        #         print(f"[*] Started AP scan on {self.scanning_interface}. Monitoring output...")
-        #         print("Press Ctrl+C to stop the scan. Use 'show_drones' or 'show_aps' at any time.")
-        #         print("When a drone is detected, use 'select_drone' to target it.")
-        #     else:
-        #         print("[!] Failed to start AP scan.")
-        # else:
-        #     print("[!] No suitable monitor mode interface found or selected. AP scan aborted.")
-        
-    def do_analyze_airodump_result(self, arg): # This is a private method, not a command,  after testing change it back.    
-        """
-        Internal method to analyze airodump-ng results and detect drones.
-        This is called after starting the airodump-ng process.
-        """
-        airodump_output : tuple[DataTable, DataTable]  = convert_airodump_csv_to_datatables("/home/chan/code/skyfall/airodump_output_wlx3460f9f53faf-02.csv")
-        self._filter_drones(airodump_output[0])
-        print("\n--- Drone Detection Results ---")
-        if self.drone_data.get_row_count() == 0:
-            print("[!] No drones detected.")
-        else:
-            self.selected_drone = self.drone_data.show_table_and_select(title="Detected Drones", selection_message="\nSelect the drone to do next actions (or 'q' to quit): ") 
-            if not self.selected_drone:
-                print("[*] No drone selected or selection cancelled.")
-                return
-            print("\n--- Checking for devices connected to the drone ---")      
-            self._get_connected_devices(self.selected_drone.get("BSSID", ""), airodump_output[1])
-            if self.connected_devices.get_row_count() == 0:
-                print("[!] No connected devices found for this drone.")
-            else:
-                print("\n--- Connected Devices to the Drone ---")
-                self.connected_devices.show_table_and_select(title="Connected Devices", selection_message="\nSelect a device by S.No to do next actions (or 'q' to quit): ")
-        
-        
-        
-        
-    def _filter_drones(self, ap_datatable: DataTable):
-        self.drone_data = DataTable(headers=["S.No", "BSSID", "ESSID", "Channel", "Power", "DroneType", "Vendor", "Method"])
-        if ap_datatable.get_row_count() == 0:
-            print("[!] No Access Points found to analyze.")
-        for row in ap_datatable.get_all_rows_as_dicts():
-            bssid = row.get("BSSID", "")
-            if not bssid:
-                continue
-            result : DroneInfo | None = self.ap_analyzers[0].is_drone(bssid)
-            if result is None:
-                continue
-            self.drone_data.add_row([
-                len(self.drone_data.rows) + 1,
-                bssid,
-                row.get("ESSID", "N/A"),
-                row.get("Channel", "N/A"),
-                row.get("Power", "N/A"),
-                result.drone_type,
-                result.vendor,
-                result.detection_method
-            ])    
-    
-    
-    def _get_connected_devices(self, ap_bssid: str, connected_devices: DataTable):
-        """
-        Returns a DataTable of devices connected to the given BSSID.
-        This is a placeholder implementation; actual implementation may vary.
-        """
-        ap_bssid = ap_bssid.strip().upper()
-        self.connected_devices = DataTable(headers=["Device_MAC", "BSSID"])
-        for row in connected_devices.get_all_rows_as_dicts():
-            bssid = row.get("BSSID", "").strip().upper()
-            if bssid == ap_bssid:
-                device_mac = row.get("Station MAC", "N/A")
-                self.connected_devices.add_row([device_mac, ap_bssid])            
-    
-    
-    
-        
-    # def _anaylze_airodump_result(self):
-    #     try:
-    #         csv_file_path = f"{self.airodump_output_file}-01.csv"
-    #         with open(csv_file_path, 'rb') as f_bytes:
-    #             lines = f_bytes.read().decode('utf-8', errors='ignore').strip().splitlines()
-    #             for line in lines:
-    #                 if line.__contains__('BSSID'):
-    #                     continue
-    #                 if lines.__contains__('Station MAC'):
-    #                     continue
-    #                 if line is None or line.strip() == "":
-    #                     continue
-    #                 try:
-    #                     import io
-    #                     reader = csv.reader(io.StringIO(line))
-    #                     row_data = next(reader)
-                        
-    #                     if len(row_data) >= 13: # this is not needed actually
-    #                         ap_bssid = row_data[0].strip()
-    #                         if ap_bssid not in self.known_aps:
-    #                             ap_info = {
-    #                                 "BSSID": ap_bssid,
-    #                                 "ESSID": row_data[13].strip() if row_data[13].strip() != "" else "<Hidden>",
-    #                                 "Channel": row_data[3].strip(),
-    #                                 "Power": row_data[8].strip(),
-    #                                 "RawData": row_data
-    #                             }
-    #                             self.known_aps[ap_bssid] = ap_info
-    #                             self._analyze_ap_for_drone(ap_info)
-    #                 except csv.Error:
-    #                     pass
-    #     except Exception as e:
-    #         print(f"[!] Error in _anaylze_airodump_result: {e}")
-    #         pass
-
-    # def _monitor_airodump_output(self):
-    #     """
-    #     Internal method to continuously monitor and parse airodump-ng CSV output file live.
-    #     Runs in a separate thread.
-    #     """
-    #     csv_file_path = f"{self.airodump_output_file}-01.csv"
-    #     last_read_byte = 0
-        
-    #     print(f"\n[*] Monitoring airodump-ng CSV: {csv_file_path}")
-
-    #     # The loop condition is correct
-    #     while not self.stop_scan_event.is_set():
-    #         # Check if the airodump-ng process is still running
-    #         if self.airodump_process and self.airodump_process.poll() is not None:
-    #             print("[!] airodump-ng process has terminated unexpectedly.")
-    #             self.stop_scan_event.set()
-    #             break
-            
-    #         # Wait for file to exist
-    #         if not os.path.exists(csv_file_path):
-    #             time.sleep(1)
-    #             continue
-            
-    #         try:
-    #             # The file reading logic looks correct, reading from the last known position.
-    #             with open(csv_file_path, 'rb') as f_bytes:
-    #                 f_bytes.seek(last_read_byte)
-    #                 new_content_bytes = f_bytes.read()
-    #                 last_read_byte = f_bytes.tell()
-
-    #                 if not new_content_bytes:
-    #                     time.sleep(1)
-    #                     continue
-                    
-    #                 new_content = new_content_bytes.decode('utf-8', errors='ignore')
-    #                 lines = new_content.strip().splitlines()
-    #                 ap_section_started = False
-                    
-    #                 for line in lines:
-    #                     if line.startswith("BSSID,"):
-    #                         ap_section_started = True
-    #                         continue
-    #                     if line.startswith("Station MAC,"):
-    #                         ap_section_started = False
-    #                         break
-                        
-    #                     if ap_section_started and line.strip():
-    #                         try:
-    #                             import io
-    #                             reader = csv.reader(io.StringIO(line))
-    #                             row_data = next(reader)
-
-    #                             if len(row_data) >= 17:
-    #                                 ap_bssid = row_data[0].strip()
-    #                                 # ... rest of parsing logic ...
-    #                                 if ap_bssid not in self.known_aps:
-    #                                     ap_info = {
-    #                                         "BSSID": ap_bssid,
-    #                                         "ESSID": row_data[13].strip() if row_data[13].strip() != "" else "<Hidden>",
-    #                                         "Channel": row_data[3].strip(),
-    #                                         "Power": row_data[8].strip(),
-    #                                         "RawData": row_data
-    #                                     }
-    #                                     self.known_aps[ap_bssid] = ap_info
-    #                                     self._analyze_ap_for_drone(ap_info)
-    #                         except csv.Error:
-    #                             pass
-    #                         except Exception as e:
-    #                             print(f"[!] Warning: Error parsing AP line: {line} - {e}")
-    #                             pass
-                
-    #         except FileNotFoundError:
-    #             pass
-    #         except Exception as e:
-    #             print(f"\n[!] Error reading airodump-ng CSV: {e}")
-            
-    #         time.sleep(1) # Wait before checking for new content again
-
-    #     print("[*] AP scan monitoring thread stopped.")
-
-    # def _analyze_ap_for_drone(self, ap_data: Dict[str, Any]):
-    #     """
-    #     Runs the AP data through all registered drone analyzers.
-    #     If a drone is detected, adds it to `detected_drones` and prints an alert.
-    #     """
-    #     for analyzer in self.ap_analyzers:
-    #         detection_result = analyzer.analyze(ap_data)
-    #         if detection_result and detection_result.get("is_drone"):
-    #             drone_bssid = ap_data["BSSID"]
-    #             if drone_bssid not in self.detected_drones:
-    #                 # Construct drone info with a unique S.No for selection later
-    #                 s_no = len(self.detected_drones) + 1 
-    #                 drone_info = {
-    #                     "S.No": s_no, # Add S.No for selection
-    #                     "BSSID": drone_bssid,
-    #                     "ESSID": ap_data.get("ESSID", "N/A"),
-    #                     "DroneType": detection_result.get("drone_type", "Unknown"),
-    #                     "Vendor": detection_result.get("vendor", "N/A"),
-    #                     "Method": detection_result.get("detection_method", "N/A")
-    #                 }
-    #                 self.detected_drones[drone_bssid] = drone_info
-    #                 # Print an immediate, prominent alert
-    #                 sys.stdout.write(f"\n[!!!] DRONE DETECTED: {drone_info.get('DroneType')} ({drone_info.get('Vendor')}) - BSSID: {drone_info.get('BSSID')} (S.No: {drone_info.get('S.No')})\n")
-    #                 sys.stdout.write(self.prompt) # Reprint prompt after alert
-    #                 sys.stdout.flush()
-    #             break # Stop after first analyzer detects it
-
-    def do_show_drones(self, arg):
-        """
-        Displays currently detected drones.
-        Usage: show_drones
-        """
-        if not self.detected_drones:
-            print("[*] No drones detected yet.")
+        # TODO: For now, its fine but move all the aircrack-ng commands to one module, make it used from there. 
+        aircrackNgHandler = AircrackNgHandler()
+        if not self.drone_target_info or not self.drone_target_info.interface:
+            print("[!] No valid Wi-Fi interface selected. Please toggle one to MONITOR mode first.")
             return
+        aircrackNgHandler.start_airodump_scan(self.drone_target_info.interface,
+                                              output_prefix="airodump_output",
+                                              duration_sec=duration,
+                                              use_sudo=True,
+                                              ignore_negative_one=True)
+        analyser = DroneCSVAnalyser()  # includes Parrot analyser by default
+        results = analyser.analyse_csv_all("airodump_output-01.csv")
 
-        drone_dt = DataTable(headers=["S.No", "BSSID", "ESSID", "DroneType", "Vendor", "Method"])
-        # Populate DataTable from self.detected_drones (which already have S.No)
-        for drone_info in self.detected_drones.values():
-            drone_dt.add_row([
-                drone_info.get("S.No"),
-                drone_info.get("BSSID"),
-                drone_info.get("ESSID"),
-                drone_info.get("DroneType"),
-                drone_info.get("Vendor"),
-                drone_info.get("Method")
-            ])
-        drone_dt.print_table(title="Filtered Drone (Detected Drones)")
-        if self.current_target_drone:
-            print(f"\n[*] Current Target Drone: {self.current_target_drone.get('BSSID')} (Type: {self.current_target_drone.get('DroneType')})")
-
-
-    def do_show_aps(self, arg):
-        """
-        Displays all discovered Access Points (including non-drones).
-        Usage: show_aps
-        """
-        if not self.known_aps:
-            print("[*] No Access Points discovered yet.")
+        if not results:
+            print("No drone APs detected.")
             return
+        ap_table = results_to_datatable(results)
+        selected_ap_row = ap_table.show_table_and_select(title="Detected Drone Access Points")
+        if not selected_ap_row:
+            return None
 
-        ap_dt = DataTable(headers=["S.No", "BSSID", "ESSID", "Channel", "Power", "Is Drone?"])
-        s_no_counter = 1
-        for ap_bssid, ap_info in self.known_aps.items():
-            is_drone = "Yes" if ap_bssid in self.detected_drones else "No"
-            ap_dt.add_row([
-                s_no_counter,
-                ap_info.get("BSSID"),
-                ap_info.get("ESSID"),
-                ap_info.get("Channel"),
-                ap_info.get("Power"),
-                is_drone
-            ])
-            s_no_counter += 1
-        ap_dt.print_table(title="Access Point Infos (All Discovered APs)")
+        # map S.No -> result
+        idx = int(selected_ap_row["S.No"]) - 1
+        if idx < 0 or idx >= len(results):
+            print("[!] Invalid selection.")
+            return None
+        chosen = results[idx]
 
-    def do_select_drone(self, arg):
-        """
-        Selects a detected drone as the current target for further processing/attack.
-        Usage: select_drone <S.No>
-        """
-        if not self.detected_drones:
-            print("[!] No drones detected yet. Use 'ap_scan' first.")
+        # show clients for that AP
+        sta_table = stations_to_datatable(chosen.connected_devices)
+        selected_sta_row = sta_table.show_table_and_select(
+            title=f"Clients connected to {chosen.drone_ap.essid or '<hidden>'} ({chosen.drone_ap.bssid})",
+            selection_message="\nSelect a client S.No (or 'q' to skip client selection): "
+        )
+        # client selection can be optional; return None controller_mac if skipped
+        controller_mac = None
+        if selected_sta_row:
+            controller_mac = selected_sta_row.get("Station MAC")
+
+        sel = {
+            "selected_ap": chosen,
+            "selected_ap_row": selected_ap_row,
+            "selected_client_row": selected_sta_row,
+            "controller_mac": controller_mac
+        }
+        if not sel:
+            print("[*] Selection cancelled.")
             return
+        iface = InterfaceInfo(iface_name=self.drone_target_info.interface.iface_name, original_name=self.drone_target_info.interface.original_name, mode=self.drone_target_info.interface.mode)
+        self.drone_target_info = build_target_info_from_selection(sel["selected_ap"], iface, sel["controller_mac"], use_sudo=True)
 
-        # Display detected drones for selection
-        drone_dt = DataTable(headers=["S.No", "BSSID", "ESSID", "DroneType", "Vendor"])
-        for drone_info in self.detected_drones.values():
-            drone_dt.add_row([
-                drone_info.get("S.No"),
-                drone_info.get("BSSID"),
-                drone_info.get("ESSID"),
-                drone_info.get("DroneType"),
-                drone_info.get("Vendor")
-            ])
-        drone_dt.print_table(title="Select a Drone to Target")
-
-        if arg: # If an argument is provided, try to use it directly
-            try:
-                selected_s_no = int(arg)
-            except ValueError:
-                print("[!] Invalid S.No. Please enter a number from the table.")
-                return
-        else: # Otherwise, prompt interactively
-            while True:
-                choice = input("\nEnter S.No of drone to select (or 'q' to cancel): ").strip().lower()
-                if choice == 'q':
-                    print("[*] Drone selection cancelled.")
-                    self.current_target_drone = None # Clear target if cancelled
-                    return
-                if not choice.isdigit():
-                    print("[!] Please enter a valid S.No or 'q'.")
-                    continue
-                selected_s_no = int(choice)
-                break
-        
-        selected_drone_info = None
-        for drone_info in self.detected_drones.values():
-            if drone_info.get("S.No") == selected_s_no:
-                selected_drone_info = drone_info
-                break
-
-        if selected_drone_info:
-            self.current_target_drone = selected_drone_info
-            print(f"[*] Drone '{selected_drone_info.get('ESSID')} ({selected_drone_info.get('BSSID')})' selected as current target.")
-            print(f"[*] Context set for: {self.current_target_drone.get('DroneType')} from {self.current_target_drone.get('Vendor')}")
-        else:
-            print(f"[!] S.No {selected_s_no} not found in detected drones. Please select a valid S.No.")
-            self.current_target_drone = None # Ensure no invalid target is set
-
-    def complete_select_drone(self, text, line, begidx, endidx):
-        if not self.detected_drones:
-            return []
-        
-        # Suggest S.No values for detected drones
-        s_nos = [str(d.get("S.No")) for d in self.detected_drones.values() if str(d.get("S.No")).startswith(text)]
-        return s_nos
+        print("\n[✓] Target ready:")
+        print(f"  Drone   : {self.drone_target_info.ssid or '<hidden>'} ({self.drone_target_info.drone_mac}) ch={self.drone_target_info.channel}")
+        print(f"  Controller MAC: {self.drone_target_info.controller_mac or '(not selected)'}")
+        print(f"  NIC     : {self.drone_target_info.interface.iface_name} [{self.drone_target_info.interface.mode.value}]")
+        print(f"[*] AP scan completed. Now execute the command list_attacks to see available attacks.")
+        # return self.drone_target_info
     
-    
+    def complete_ap_scan(self, text, line, begidx, endidx):
+        """
+        Completes the ap_scan command with available options.
+        """
+        parts = shlex.split(line[:endidx])
+        if len(parts) == 2 and parts[1].startswith('--'):
+            return ['duration']
+        return []
+            
+    def do_analyze_result(self, arg): # TODO: Remove after testing
+        analyser = DroneCSVAnalyser()  # includes Parrot analyser by default
+        results = analyser.analyse_csv_all("airodump_output_wlx3460f9f53faf-02.csv")
+
+        if not results:
+            print("No drone APs detected.")
+            return
+        ap_table = results_to_datatable(results)
+        selected_ap_row = ap_table.show_table_and_select(title="Detected Drone Access Points")
+        if not selected_ap_row:
+            return None
+
+        # map S.No -> result
+        idx = int(selected_ap_row["S.No"]) - 1
+        if idx < 0 or idx >= len(results):
+            print("[!] Invalid selection.")
+            return None
+        chosen = results[idx]
+
+        # show clients for that AP
+        sta_table = stations_to_datatable(chosen.connected_devices)
+        selected_sta_row = sta_table.show_table_and_select(
+            title=f"Clients connected to {chosen.drone_ap.essid or '<hidden>'} ({chosen.drone_ap.bssid})",
+            selection_message="\nSelect a client S.No (or 'q' to skip client selection): "
+        )
+        # client selection can be optional; return None controller_mac if skipped
+        # TODO: Make sure no error is happening here.
+        controller_mac = None
+        if selected_sta_row:
+            controller_mac = selected_sta_row.get("Station MAC")
+
+        sel = {
+            "selected_ap": chosen,
+            "selected_ap_row": selected_ap_row,
+            "selected_client_row": selected_sta_row,
+            "controller_mac": controller_mac
+        }
+        if not sel:
+            print("[*] Selection cancelled.")
+            return
+        iface = InterfaceInfo(iface_name='Wlan1Mon', original_name='Wlan1Mon', mode=InterfaceMode.MONITOR)
+        info = build_target_info_from_selection(sel["selected_ap"], iface, sel["controller_mac"], use_sudo=True)
+
+        print("\n[✓] Target ready:")
+        print(f"  Drone   : {info.ssid or '<hidden>'} ({info.drone_mac}) ch={info.channel}")
+        print(f"  Controller MAC: {info.controller_mac or '(not selected)'}")
+        print(f"  NIC     : {info.interface.iface_name} [{info.interface.mode.value}]")
+        # return info        
+
     def do_list_attacks(self, arg):
         """
         Lists all available attacks based on the selected drone.
@@ -595,37 +330,26 @@ class SkyFallConsole(cmd.Cmd):
         #     print("[!] No drone selected. Use 'select_drone' first.")
         #     return
         self.attack_factory = get_attack_factory()
-        supported_attacks : List[AttackType] = self.attack_factory.get_supported_attacks(Manufacturer.PARROT, ParrotModel.AR2.value)
+        supported_attacks : List[AttackType] = self.attack_factory.get_supported_attacks(Manufacturer.PARROT, Model.PARROT_AR2.value)
         print("\n--- Available Attacks for Selected Drone ---")
         for attack in supported_attacks:
             print(f"- {attack.name} ({attack.value})")
             
-        attack_type = input("Enter the attack type number").strip().upper()
-        
-        attack  = self.attack_factory.create(Manufacturer.PARROT, ParrotModel.AR2.value, AttackType.ARP_SPOOF, DroneTargetInfo("", "", "", "", "", 1))
+        attack_number = int(input("Enter the attack type number").strip())
+        attack_type = AttackType(attack_number)
+        if self.drone_target_info is None:
+            print("[!] No drone target info available. Please run 'ap_scan' first.")
+            return        
+        attack  = self.attack_factory.create(Manufacturer.PARROT, Model.PARROT_AR2.value, attack_type, self.drone_target_info)
         if not attack:
             print("[!] Invalid attack type selected.")
             return
         result = attack.attack()
+        if result and result.stderr is None:
+            print(f"\n[✓] Attack '{attack_type.name}' executed successfully.")
+        print(f"=> Execution result: {result.stdout.strip()}")
 
-
-
-    def do_scan(self, arg):
-        """
-        Performs a scan.
-        Usage: scan --wifi
-        """
-        args = shlex.split(arg)
-        if "--wifi" in args:
-            print("Scanning wifi frequencies....")
-        else:
-            print("[!] Invalid 'scan' command. Use 'scan --wifi'.")
- 
-    def complete_scan(self, text, line, begidx, endidx):
-        options = ["--wifi"]
-        return [opt for opt in options if opt.startswith(text)]
-
-    def do_shell(self, arg):
+    def do_shell(self, arg): 
         """
         Execute a shell command.
         Usage: shell <command_and_args>

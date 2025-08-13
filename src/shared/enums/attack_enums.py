@@ -5,14 +5,13 @@ class Manufacturer(Enum):
     DJI = "DJI"
     # add more as needed
 
-class ParrotModel(Enum):
-    AR2 = "AR 2.0"
-    BEBOP = "Bebop"
-    # extend here
-
-class DjiModel(Enum):
-    PHANTOM = "Phantom"
-    MAVIC = "Mavic"
+class Model(Enum):
+    # ParrotModel
+    PARROT_AR2 = "AR 2.0"
+    PARROT_BEBOP = "Bebop"
+    # DJi Model
+    DJI_PHANTOM = "Phantom"
+    DJI_MAVIC = "Mavic"
     # extend here
 
 class AttackType(Enum):

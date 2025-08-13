@@ -9,24 +9,15 @@ from .cancellation_token import CancellationToken, OperationCanceledError
 
 @dataclass
 class CommandResult:
-    """
-    A data class to hold the results of a command execution.
-    This provides a structured way to return the output, error, and
-    exit code of a completed process.
-    """
     stdout: str
     stderr: str
     return_code: int
 
+
 class CommandExecutor:
     """
-    Executes shell commands in a non-blocking way with advanced features.
-
-    This executor runs commands in a separate thread, allowing the main
-    application to remain responsive. It supports graceful cancellation
-    via a CancellationToken, enforces timeouts, and can execute commands
-    with superuser privileges (sudo). All command output (stdout, stderr)
-    is captured in memory and returned upon completion.
+    Executes shell commands in a non-blocking (threaded) way by default.
+    If exec_in_thread=False, runs in the current thread via subprocess.run.
     """
 
     def execute(
@@ -35,40 +26,80 @@ class CommandExecutor:
         cancellation_token: Optional[CancellationToken] = None,
         timeout: float = 30.0,
         sudo: bool = False,
+        exec_in_new_thread: bool = True,  # NEW: set to False to run in this thread
     ) -> CommandResult:
-        """
-        Executes a given command and waits for its completion.
 
-        Args:
-            command: The command and its arguments as a list of strings.
-            cancellation_token: A token to monitor for cancellation requests.
-            timeout: The maximum time in seconds to allow the command to run.
-            sudo: If True, the command will be executed with 'sudo'.
+        if not exec_in_new_thread:
+            return self._execute_foreground_run(command, timeout, sudo)
 
-        Returns:
-            A CommandResult object containing the full stdout, stderr,
-            and return code.
-
-        Raises:
-            ValueError: If sudo is True but no password is provided.
-            FileNotFoundError: If the command does not exist.
-            TimeoutError: If the command exceeds the specified timeout.
-            OperationCanceledError: If the operation is canceled via the token.
-        """
         result_container = {}
-        # The command is executed in a separate thread to keep the main thread responsive
-        # and to manage the execution lifecycle (timeout, cancellation).
         execution_thread = threading.Thread(
             target=self._execute_in_thread,
             args=(command, cancellation_token, timeout, sudo, result_container)
         )
         execution_thread.start()
-        execution_thread.join()  # Wait for the thread to complete
+        execution_thread.join()
 
         if "error" in result_container:
             raise result_container["error"]
         return result_container["result"]
 
+    # ---------- NEW: foreground single-thread path using subprocess.run ----------
+    def _execute_foreground_run(
+        self,
+        command: List[str],
+        timeout: float,
+        sudo: bool,
+    ) -> CommandResult:
+        """
+        Run command in the current thread using subprocess.run.
+        Captures stdout/stderr and returns CommandResult.
+        Ctrl+C (KeyboardInterrupt) is surfaced as OperationCanceledError.
+        """
+        full_command = ["sudo"] + command if sudo else command
+        # None means no timeout; allow 0/None to mean "no timeout"
+        # effective_timeout = None if (timeout is None or timeout <= 0) else timeout
+        try:
+            process = subprocess.Popen(
+                                    full_command,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    text=True
+                                )
+            if process is None:
+                return CommandResult("", "", 1)  # Command failed to start
+            stdout_lines, stderr_lines = [], []
+
+            for line in process.stdout:
+                sys.stdout.write(line)
+                sys.stdout.flush()
+                stdout_lines.append(line)
+
+            for line in process.stderr:
+                sys.stderr.write(line)
+                sys.stderr.flush()
+                stderr_lines.append(line)
+
+            process.wait()
+
+            return CommandResult(
+                stdout="".join(stdout_lines),
+                stderr="".join(stderr_lines),
+                return_code=process.returncode
+            )
+        except subprocess.TimeoutExpired:
+            # mimic threaded path semantics
+            raise TimeoutError(f"Command timed out after {timeout} seconds.")
+        except KeyboardInterrupt:
+            # user hit Ctrl+C
+            raise OperationCanceledError()
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Command not found: '{full_command[0]}'")
+        except Exception as e:
+            # bubble up unexpected errors
+            raise e
+
+    # ---------- existing threaded path (unchanged) ----------
     def _execute_in_thread(
         self,
         command: List[str],
@@ -77,19 +108,9 @@ class CommandExecutor:
         sudo: bool,
         result_container: dict
     ):
-        """
-        The internal method that runs the command in a thread.
-        This handles the subprocess creation, in-memory I/O capturing,
-        and monitoring for cancellation or timeout.
-        """
         try:
             full_command = ["sudo"] + command if sudo else command
-
-            # When using 'sudo', we let the process handle the password prompt directly.
-            # We explicitly set stdin to None so it inherits from the parent process.
             stdin_pipe = subprocess.PIPE if not sudo else None
-
-            # Popen is used to get fine-grained control for cancellation and timeouts.
             process = subprocess.Popen(
                 full_command,
                 stdin=stdin_pipe,
@@ -99,7 +120,6 @@ class CommandExecutor:
                 bufsize=1,
             )
 
-            # Threads are used to read stdout and stderr concurrently without blocking.
             stdout_lines, stderr_lines = [], []
             stdout_thread = threading.Thread(target=self._read_stream, args=(process.stdout, stdout_lines))
             stderr_thread = threading.Thread(target=self._read_stream, args=(process.stderr, stderr_lines))
@@ -107,30 +127,24 @@ class CommandExecutor:
             stderr_thread.start()
 
             start_time = time.time()
-            # This loop monitors the process while it's running.
             while process.poll() is None:
-                # Check for a cancellation signal.
                 if cancellation_token and cancellation_token.is_cancelled():
-                    process.terminate()  # Attempt a graceful shutdown.
-                    # Wait for a short period before killing
+                    process.terminate()
                     try:
                         process.wait(timeout=5)
                     except subprocess.TimeoutExpired:
                         process.kill()
                     raise OperationCanceledError()
 
-                # Check if the command has exceeded its time limit.
-                if time.time() - start_time > timeout:
-                    process.kill()  # Forcefully stop the process.
+                if timeout and time.time() - start_time > timeout:
+                    process.kill()
                     raise TimeoutError(f"Command timed out after {timeout} seconds.")
-                
-                time.sleep(0.1)  # Prevent the loop from consuming too much CPU.
 
-            # Wait for the stream-reading threads to finish to ensure all output is captured.
+                time.sleep(0.1)
+
             stdout_thread.join()
             stderr_thread.join()
 
-            # Store the final result in the shared container.
             result_container["result"] = CommandResult(
                 stdout="".join(stdout_lines),
                 stderr="".join(stderr_lines),
@@ -143,10 +157,33 @@ class CommandExecutor:
             result_container["error"] = e
 
     def _read_stream(self, process_stream: TextIO, output_list: List[str]):
-        """Reads from a process stream line by line and stores it in a list."""
         try:
             for line in iter(process_stream.readline, ''):
                 output_list.append(line)
         finally:
-            # It's important to close the stream to free up resources.
-            process_stream.close()
+            try:
+                process_stream.close()
+            except Exception:
+                pass
+
+
+class SudoHelper:
+    def __init__(self):
+        self.exec = CommandExecutor()
+
+    def is_sudo_cached(self) -> bool:
+        try:
+            res = self.exec.execute(["sudo", "-n", "true"], timeout=5, sudo=False)
+            return res.return_code == 0
+        except Exception:
+            return False
+
+    def ensure_sudo(self) -> bool:
+        if self.is_sudo_cached():
+            return True
+        print("[i] Sudo authentication required. Please enter your password…")
+        try:
+            res = self.exec.execute(["sudo", "-v"], timeout=60, sudo=False, exec_in_thread=False)
+            return res.return_code == 0
+        except Exception:
+            return False
