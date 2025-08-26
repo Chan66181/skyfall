@@ -106,32 +106,49 @@ class SkyFallConsole(cmd.Cmd):
 
     def do_toggle(self, arg):
         """
-        Select a Wi‑Fi interface and switch it to MONITOR mode.
-        - Shows interfaces
-        - Lets you pick one
-        - Toggles to monitor mode via ensure_mode
-        - Updates DroneTargetInfo.interface (InterfaceInfo) including rename + mode
+        Toggle the selected Wi-Fi interface between MONITOR <-> MANAGED using the NIC MAC.
         """
-        self.drone_target_info = DroneTargetInfo()  # Reset or create a new DroneTargetInfo
         if self.airodump_process and self.airodump_process.poll() is None:
             print("[!] Cannot toggle mode while AP scanning is active. Please stop it first.")
             return
-        print("\n--- Scanning for Wi‑Fi Cards ---")
+
+        print("\n--- Scanning for Wi-Fi Cards ---")
         datatable: DataTable = self.wifi_card_handler.get_wifi_cards()
         if not datatable.rows:
-            print("[!] No Wi‑Fi interfaces found. Please ensure your card is connected and drivers are loaded.")
+            print("[!] No Wi-Fi interfaces found. Please ensure your card is connected and drivers are loaded.")
             return
-        selected_row = datatable.show_table_and_select(title="Available Wi‑Fi Interfaces")
+
+        selected_row = datatable.show_table_and_select(title="Available Wi-Fi Interfaces")
         if not selected_row:
             print("[*] No interface selected or selection cancelled.")
             return
-        # Build InterfaceInfo from the chosen row and attach it to DroneTargetInfo
+
+        mac = self._normalise_mac(selected_row.get("BSSID"))
+        if not mac:
+            print("[!] Selected row does not have a NIC MAC address. Cannot proceed safely.")
+            return
+
+        live_name = self.wifi_card_handler.resolve_iface_by_mac(mac)
+        if not live_name:
+            print(f"[!] Could not resolve an interface for MAC {mac}. Is the adapter up?")
+            return
+
+        current_mode = self.wifi_card_handler.get_interface_mode(live_name)
+        is_monitor = (current_mode.value == "monitor")
+        target_mode = InterfaceMode.MANAGED if is_monitor else InterfaceMode.MONITOR
+
+        if not self.drone_target_info:
+            self.drone_target_info = DroneTargetInfo()
         ii = InterfaceInfo.from_row(selected_row)
+        ii.iface_name = live_name
+        ii.mode = InterfaceMode.MONITOR if is_monitor else InterfaceMode.MANAGED
+        ii.bssid = mac
         self.drone_target_info.interface = ii
-        print(f"\n--- Switching '{ii.iface_name}' to MONITOR mode ---")
-        ok, out, err, msg, updated_iface = self.wifi_card_handler.ensure_mode(
-            interface=ii.iface_name,
-            required_mode=InterfaceMode.MONITOR,
+
+        print(f"\n--- Switching '{live_name}' (MAC {mac}) from {current_mode.value or 'unknown'} to {target_mode.value} ---")
+        ok, out, err, msg, final_name = self.wifi_card_handler.ensure_mode_by_mac(
+            mac=mac,
+            required_mode=target_mode,
             use_sudo=True
         )
         print(f"[i] {msg}")
@@ -139,33 +156,47 @@ class SkyFallConsole(cmd.Cmd):
             if out.strip(): print("[stdout]\n" + out.strip())
             if err.strip(): print("[stderr]\n" + err.strip())
             return
-        # Persist rename + mode in InterfaceInfo and DroneTargetInfo
-        if updated_iface and updated_iface != ii.iface_name:
+
+        final_name = final_name or live_name
+        if final_name != ii.iface_name:
             ii.is_name_changed = True
-            ii.monitor_name = updated_iface
-            ii.iface_name = updated_iface
-        ii.mode = InterfaceMode.MONITOR
-        print(f"[*] Interface now in MONITOR mode: {ii.iface_name}")
-        print("\n--- Final Wi‑Fi Card State ---")
+            if target_mode == InterfaceMode.MONITOR:
+                ii.monitor_name = final_name
+            ii.iface_name = final_name
+        ii.mode = target_mode
+        self.drone_target_info.interface = ii
+
+        print(f"[*] Interface now in {target_mode.value.upper()} mode: {final_name} (MAC {mac})")
+
+        print("\n--- Final Wi-Fi Card State ---")
         final_table = self.wifi_card_handler.get_wifi_cards()
-        final_table.print_table(title="Updated Wi‑Fi Interfaces")
-        # Optional: remember UX helper
+        final_table.print_table(title="Updated Wi-Fi Interfaces")
+
+        self._last_monitor_interface = None
         for row in final_table.get_all_rows_as_dicts():
-            row_iface = row.get("Updated_Interface") or row.get("Interface")
-            if row_iface == ii.iface_name and str(row.get("Mode","")).lower() == "monitor":
+            row_mac = self._normalise_mac(row.get("BSSID") or row.get("MAC") or row.get("Addr"))
+            if row_mac == mac and str(row.get("Mode", "")).lower() == "monitor":
                 self._last_monitor_interface = row
                 break
+        if self._last_monitor_interface:
+            print(f"[*] Saved last monitor interface: {final_name} (MAC {mac})")
+        else:
+            print(f"[*] {final_name} (MAC {mac}) is not in monitor mode; cleared last monitor reference if any.")
+        
+    def _normalise_mac(self, mac: Optional[str]) -> Optional[str]:
+        return mac.lower() if mac else None
+
             
-    def do_list_wifi(self, arg):
-        """
-        List all detected Wi-Fi interfaces and their current modes.
-        Usage: list_wifi
-        """
-        print("\n--- Scanning for Wi-Fi Cards ---")
-        datatable: DataTable = self.wifi_card_handler.get_wifi_cards()
-        if not datatable.rows:
-            print("[!] No Wi-Fi interfaces found.")
-        datatable.print_table(title="Available Wi-Fi Interfaces")
+    # def do_list_wifi(self, arg):
+    #     """
+    #     List all detected Wi-Fi interfaces and their current modes.
+    #     Usage: list_wifi
+    #     """
+    #     print("\n--- Scanning for Wi-Fi Cards ---")
+    #     datatable: DataTable = self.wifi_card_handler.get_wifi_cards()
+    #     if not datatable.rows:
+    #         print("[!] No Wi-Fi interfaces found.")
+    #     datatable.print_table(title="Available Wi-Fi Interfaces")
     
     
     def do_ap_scan(self, arg):
@@ -247,8 +278,8 @@ class SkyFallConsole(cmd.Cmd):
         if not sel:
             print("[*] Selection cancelled.")
             return
-        iface = InterfaceInfo(iface_name=self.drone_target_info.interface.iface_name, original_name=self.drone_target_info.interface.original_name, mode=self.drone_target_info.interface.mode)
-        self.drone_target_info = build_target_info_from_selection(sel["selected_ap"], iface, sel["controller_mac"], use_sudo=True)
+        # iface = InterfaceInfo(iface_name=self.drone_target_info.interface.iface_name, original_name=self.drone_target_info.interface.original_name, mode=self.drone_target_info.interface.mode, bssid=self.)
+        self.drone_target_info = build_target_info_from_selection(sel["selected_ap"], self.drone_target_info.interface, sel["controller_mac"], use_sudo=True)
 
         print("\n[✓] Target ready:")
         print(f"  Drone   : {self.drone_target_info.ssid or '<hidden>'} ({self.drone_target_info.drone_mac}) ch={self.drone_target_info.channel}")
@@ -317,31 +348,51 @@ class SkyFallConsole(cmd.Cmd):
 
     def do_list_attacks(self, arg):
         """
-        Lists all available attacks based on the selected drone.
+        Lists all available attacks for the selected drone, ordered by enum value.
         Usage: list_attacks
         """
-        # if not self.current_target_drone:
-        #     print("[!] No drone selected. Use 'select_drone' first.")
-        #     return
         self.attack_factory = get_attack_factory()
-        supported_attacks : List[AttackType] = self.attack_factory.get_supported_attacks(Manufacturer.PARROT, Model.PARROT_AR2.value)
+        supported_attacks: List[AttackType] = self.attack_factory.get_supported_attacks(
+            Manufacturer.PARROT, Model.PARROT_AR2.value
+        )
+
+        # Sort by the Enum numeric value
+        supported_attacks = sorted(supported_attacks, key=lambda a: a.value)
+
         print("\n--- Available Attacks for Selected Drone ---")
-        for attack in supported_attacks:
-            print(f"- {attack.name} ({attack.value})")
-            
-        attack_number = int(input("Enter the attack type number").strip())
+        for idx, attack in enumerate(supported_attacks, start=1):
+            print(f"{idx}. {attack.name.replace('_', ' ').title()}")
+
+        try:
+            attack_number = int(input("Enter the attack number: ").strip())
+        except ValueError:
+            print("[!] Invalid input. Please enter a number.")
+            return
+
+        if attack_number < 1 or attack_number > len(supported_attacks):
+            print("[!] Invalid selection. Please enter a valid attack number.")
+            return
+
+        # Pick the attack type by sorted order
+        # attack_type = supported_attacks[attack_number - 1]
         attack_type = AttackType(attack_number)
+
         if self.drone_target_info is None:
             print("[!] No drone target info available. Please run 'ap_scan' first.")
-            return        
-        attack  = self.attack_factory.create(Manufacturer.PARROT, Model.PARROT_AR2.value, attack_type, self.drone_target_info)
+            return
+
+        attack = self.attack_factory.create(
+            Manufacturer.PARROT, Model.PARROT_AR2.value, attack_type, self.drone_target_info
+        )
         if not attack:
             print("[!] Invalid attack type selected.")
             return
+
         result = attack.attack()
         if result and result.stderr is None:
             print(f"\n[✓] Attack '{attack_type.name}' executed successfully.")
         print(f"=> Execution result: {result.stdout.strip()}")
+
         
         
         

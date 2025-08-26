@@ -15,7 +15,7 @@ class AttackResult:
 
 @dataclass
 class InterfaceInfo:
-    """Represents a Wi‑Fi interface and its evolving state."""
+    """Represents a Wi-Fi interface and its evolving state (tracked by MAC)."""
     iface_name: str                           # current/active name (always use this for commands)
     original_name: Optional[str] = None       # first-seen name
     monitor_name: Optional[str] = None        # typical renamed mon iface (e.g., wlan0mon)
@@ -26,18 +26,22 @@ class InterfaceInfo:
 
     @classmethod
     def from_row(cls, row: dict) -> "InterfaceInfo":
-        name = row.get("Updated_Interface") or row.get("Interface")
-        if not name:
-            raise ValueError("Interface name is required to create InterfaceInfo.")
+        """
+        Build from a table row but don't trust the interface name; we will
+        re-resolve by MAC just before actions.
+        """
+        name = row.get("Updated_Interface") or row.get("Interface") or ""
+        mode_raw = str(row.get("Mode", "")).strip().lower()
+        mode = InterfaceMode.MONITOR if mode_raw == "monitor" else InterfaceMode.MANAGED
         return cls(
             iface_name=name,
             original_name=row.get("Interface"),
-            monitor_name=(name if name != row.get("Interface") else None),
-            is_name_changed=(name != row.get("Interface")),
-            mode=InterfaceMode.MONITOR if str(row.get("Mode","")).lower() == "monitor" else InterfaceMode.MANAGED,
-            bssid=row.get("BSSID"),
+            monitor_name=(name if name and name != row.get("Interface") else None),
+            is_name_changed=(bool(name) and name != row.get("Interface")),
+            mode=mode,
+            bssid=(row.get("BSSID") or row.get("MAC") or row.get("Addr")),
         )
-        
+
     def to_dict(self) -> dict:
         return {
             "iface_name": self.iface_name,

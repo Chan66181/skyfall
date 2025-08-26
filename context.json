@@ -9,10 +9,10 @@
     "monitor_name": null,
     "is_name_changed": false,
     "mode": "monitor",
-    "bssid": null,
+    "bssid": "34:60:f9:f5:3f:af",
     "channel": null
   },
-  "channel": 1,
+  "channel": 6,
   "ssid": "ardrone2_003419",
   "use_sudo": true,
   "ip_through_drone_ap": null,
