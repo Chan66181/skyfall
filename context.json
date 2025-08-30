@@ -12,7 +12,7 @@
     "bssid": "34:60:f9:f5:3f:af",
     "channel": null
   },
-  "channel": 6,
+  "channel": 1,
   "ssid": "ardrone2_003419",
   "use_sudo": true,
   "ip_through_drone_ap": null,

@@ -5,10 +5,6 @@
         https://github.com/lwfinger/rtw88
 
 
-
-
-
-
 # Project plan
 
 1. Will start with identifying the interface. List the interface, after choosing the interface, need to choose the interface and change to monitor mode.
@@ -21,8 +17,14 @@
 7. Once we connected to the network try to install the backdor/malware or anything like how they do in the metasploit.
 
 
-
 # Docker setup
 
 1. docker run -it --net=host --privileged ubuntu bash
 => Give the privileged access to the container so that it can access the host devices.
+
+
+# Tool Dependency
+
+1. aircrack-ng
+2. mdk4
+3. ffmpeg

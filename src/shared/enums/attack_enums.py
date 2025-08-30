@@ -16,7 +16,7 @@ class Model(Enum):
 
 class AttackType(Enum):
     DEAUTH = auto()
-    DDOS = auto()
+    DOS = auto()
     CONTROL_HIJACK = auto()
     VIDEO_HIJACK = auto()
     TELNET_SHELL = auto()

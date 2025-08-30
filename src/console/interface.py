@@ -423,18 +423,7 @@ class SkyFallConsole(cmd.Cmd):
         
         print(f"[✓] Context loaded. Target: {info.ssid or '<hidden>'} ({info.drone_mac}) ch={info.channel}")
         if info.interface:
-            print(f"    NIC: {info.interface.iface_name} [{info.interface.mode.value}]")
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
+            print(f"    NIC: {info.interface.iface_name} [{info.interface.mode.value}]")      
         
 
     def do_shell(self, arg): 

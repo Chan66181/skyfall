@@ -27,10 +27,11 @@ class CommandExecutor:
         timeout: float = 30.0,
         sudo: bool = False,
         exec_in_new_thread: bool = True,  # NEW: set to False to run in this thread
+        infite_loop: bool = False,
     ) -> CommandResult:
 
         if not exec_in_new_thread:
-            return self._execute_foreground_run(command, timeout, sudo)
+            return self._execute_foreground_run(command, timeout, sudo, infinite_loop=infite_loop)
 
         result_container = {}
         execution_thread = threading.Thread(
@@ -50,6 +51,7 @@ class CommandExecutor:
         command: List[str],
         timeout: float,
         sudo: bool,
+        infinite_loop: bool
     ) -> CommandResult:
         """
         Run command in the current thread using subprocess.run.
@@ -59,6 +61,26 @@ class CommandExecutor:
         full_command = ["sudo"] + command if sudo else command
         # None means no timeout; allow 0/None to mean "no timeout"
         # effective_timeout = None if (timeout is None or timeout <= 0) else timeout
+        if not infinite_loop:
+            return self._exec(full_command=full_command, timeout=timeout, is_infinite_loop=infinite_loop)
+        stdout_lines = []
+        stderr_lines = []
+        while True:
+            try:
+                result = self._exec(full_command, timeout, infinite_loop)
+                stdout_lines.append(result.stdout)
+                stderr_lines.append(result.stderr)
+            except KeyboardInterrupt:
+                print("Operation Cancelled")
+                break
+        return CommandResult("".join(stdout_lines), "".join(stderr_lines))
+        
+        
+    def _exec(self,
+        full_command: List[str],
+        timeout: float,
+        is_infinite_loop: bool,
+        ) -> CommandResult:
         try:
             process = subprocess.Popen(
                                     full_command,
@@ -92,12 +114,15 @@ class CommandExecutor:
             raise TimeoutError(f"Command timed out after {timeout} seconds.")
         except KeyboardInterrupt:
             # user hit Ctrl+C
-            raise OperationCanceledError()
+            if is_infinite_loop:
+                pass
+            print("Operation Cancelled")
         except FileNotFoundError:
             raise FileNotFoundError(f"Command not found: '{full_command[0]}'")
         except Exception as e:
             # bubble up unexpected errors
             raise e
+    
 
     # ---------- existing threaded path (unchanged) ----------
     def _execute_in_thread(
