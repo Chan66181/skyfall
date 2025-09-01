@@ -56,31 +56,6 @@ class SkyFallConsole(cmd.Cmd):
                row_dict.get("Mode") == "monitor":
                 return row_dict # Found the last toggled interface and it's in monitor mode
         return None
-
-    # def _stop_scan_internal(self):
-    #     """Internal method to stop the active AP scan and clean up resources."""
-    #     if self.airodump_process and self.airodump_process.poll() is None:
-    #         self.stop_scan_event.set() # Signal the monitoring thread to stop
-    #         if self.scan_thread and self.scan_thread.is_alive():
-    #             print("[*] Waiting for scan monitoring thread to finish...")
-    #             self.scan_thread.join(timeout=5) # Give the thread time to exit
-    #             if self.scan_thread.is_alive():
-    #                 print("[!] Scan monitoring thread did not stop gracefully. Proceeding to stop airodump-ng.")
-            
-    #         if self.wifi_card_handler.stop_airodump_scan():
-    #             self.scanning_interface = None
-    #             self.airodump_output_file = None
-    #             self.airodump_process = None
-    #             # Don't clear known_aps or detected_drones immediately here,
-    #             # so 'show_drones' and 'show_aps' can still display results after stopping.
-    #             print("[*] AP scan successfully stopped.")
-    #         else:
-    #             print("[!] Failed to stop airodump-ng process.")
-    #     else:
-    #         print("[*] No active AP scan to stop.")
-    #         self.airodump_process = None # Ensure state is reset if process crashed
-    #         self.scanning_interface = None
-    #         self.airodump_output_file = None
     
 
     def cmdloop(self, intro=None):
@@ -185,18 +160,6 @@ class SkyFallConsole(cmd.Cmd):
         
     def _normalise_mac(self, mac: Optional[str]) -> Optional[str]:
         return mac.lower() if mac else None
-
-            
-    # def do_list_wifi(self, arg):
-    #     """
-    #     List all detected Wi-Fi interfaces and their current modes.
-    #     Usage: list_wifi
-    #     """
-    #     print("\n--- Scanning for Wi-Fi Cards ---")
-    #     datatable: DataTable = self.wifi_card_handler.get_wifi_cards()
-    #     if not datatable.rows:
-    #         print("[!] No Wi-Fi interfaces found.")
-    #     datatable.print_table(title="Available Wi-Fi Interfaces")
     
     
     def do_ap_scan(self, arg):
@@ -295,56 +258,7 @@ class SkyFallConsole(cmd.Cmd):
         parts = shlex.split(line[:endidx])
         if len(parts) == 2 and parts[1].startswith('--'):
             return ['duration']
-        return []
-            
-    def do_analyze_result(self, arg): # TODO: Remove after testing
-        analyser = DroneCSVAnalyser()  # includes Parrot analyser by default
-        results = analyser.analyse_csv_all("airodump_output_wlx3460f9f53faf-02.csv")
-
-        if not results:
-            print("No drone APs detected.")
-            return
-        ap_table = results_to_datatable(results)
-        selected_ap_row = ap_table.show_table_and_select(title="Detected Drone Access Points")
-        if not selected_ap_row:
-            return None
-
-        # map S.No -> result
-        idx = int(selected_ap_row["S.No"]) - 1
-        if idx < 0 or idx >= len(results):
-            print("[!] Invalid selection.")
-            return None
-        chosen = results[idx]
-
-        # show clients for that AP
-        sta_table = stations_to_datatable(chosen.connected_devices)
-        selected_sta_row = sta_table.show_table_and_select(
-            title=f"Clients connected to {chosen.drone_ap.essid or '<hidden>'} ({chosen.drone_ap.bssid})",
-            selection_message="\nSelect a client S.No (or 'q' to skip client selection): "
-        )
-        # client selection can be optional; return None controller_mac if skipped
-        # TODO: Make sure no error is happening here.
-        controller_mac = None
-        if selected_sta_row:
-            controller_mac = selected_sta_row.get("Station MAC")
-
-        sel = {
-            "selected_ap": chosen,
-            "selected_ap_row": selected_ap_row,
-            "selected_client_row": selected_sta_row,
-            "controller_mac": controller_mac
-        }
-        if not sel:
-            print("[*] Selection cancelled.")
-            return
-        iface = InterfaceInfo(iface_name='Wlan1Mon', original_name='Wlan1Mon', mode=InterfaceMode.MONITOR)
-        info = build_target_info_from_selection(sel["selected_ap"], iface, sel["controller_mac"], use_sudo=True)
-
-        print("\n[✓] Target ready:")
-        print(f"  Drone   : {info.ssid or '<hidden>'} ({info.drone_mac}) ch={info.channel}")
-        print(f"  Controller MAC: {info.controller_mac or '(not selected)'}")
-        print(f"  NIC     : {info.interface.iface_name} [{info.interface.mode.value}]")
-        # return info        
+        return []    
 
     def do_list_attacks(self, arg):
         """

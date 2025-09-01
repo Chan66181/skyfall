@@ -1,0 +1,12 @@
+1. Include post exploitation
+2. Move recon and all to the pre
+3. Integrating AI for terminal o/p analysis
+4. Logging and verbosity support (A centralized logger and verbosity handler)
+5. Containerize the tool, so that this will be a proper package with the all the tools installed and environmnet setup and ready to use
+
+
+
+
+TODO:
+// On Every Attack module or Hardware handler, we need to create one more decorator, that will contain a list of tools, that are used in that particular module. When that module got loaded into the 
+process, it will check the availability of the command, if the tool is not installed will install it as dependencies.

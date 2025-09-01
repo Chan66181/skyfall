@@ -88,7 +88,7 @@ class DroneTargetInfo:
     channel: Optional[int] = None
     ssid: Optional[str] = None
     use_sudo: bool = True
-    ip_through_drone_ap: Optional[str] = None
+    ip_through_drone_ap: Optional[str] = None   #TODO Move it to interface info if its interface MAC
     data: Dict[str, Any] = field(default_factory=dict) 
     
     def to_dict(self) -> dict:
