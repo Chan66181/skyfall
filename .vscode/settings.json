@@ -1,4 +1,0 @@
-{
-    "python.analysis.typeEvaluation.enableTypeIgnoreComments": false,
-    "python.analysis.typeEvaluation.strictParameterNoneValue": false
-}
