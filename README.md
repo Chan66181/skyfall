@@ -62,8 +62,3 @@ Helpful when you want to run the tool inside a docker container
 - aircrack-ng
 - mdk4
 - ffmpeg
-
-## Notes
-
-- See [`src/modules/post/notes.txt`](src/modules/post/notes.txt) for post-exploitation ideas.
-- [`src/hardware_handler/notes.txt`](src/hardware_handler/notes.txt) contains hardware handler refactoring
