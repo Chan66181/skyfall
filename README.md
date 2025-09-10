@@ -43,7 +43,7 @@ Skyfall is a toolkit for wireless drone analysis, exploitation, and post-exploit
 
 1. Identify and list WiFi interfaces; switch to monitor mode.
 2. Capture traffic, identify drones by MAC/name, enhance with behavioral analysis.
-3. Deauthenticate, crack password, connect to device.
+3. Deauthenticate, connect to device.
 4. Send control signals.
 5. Capture camera feed.
 6. Scan for open ports/vulnerabilities.
